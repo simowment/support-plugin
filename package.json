@@ -1,0 +1,54 @@
+{
+  "name": "@medusastore/medusa-plugin-support-tickets",
+  "version": "0.0.1",
+  "description": "Medusa v2 plugin for customer support tickets",
+  "main": ".medusa/server/src/index.js",
+  "exports": {
+    "./package.json": "./package.json",
+    "./modules/*": "./.medusa/server/src/modules/*/index.js",
+    "./.medusa/server/src/modules/*": "./.medusa/server/src/modules/*/index.js",
+    "./providers/*": "./.medusa/server/src/providers/*/index.js",
+    "./admin": {
+      "import": "./.medusa/server/src/admin/index.mjs",
+      "require": "./.medusa/server/src/admin/index.js",
+      "default": "./.medusa/server/src/admin/index.js"
+    },
+    "./*": "./.medusa/server/src/*.js",
+    ".": {
+      "import": "./.medusa/server/src/index.js",
+      "require": "./.medusa/server/src/index.js",
+      "default": "./.medusa/server/src/index.js"
+    }
+  },
+  "files": [
+    ".medusa/server"
+  ],
+  "scripts": {
+    "build": "node ../node_modules/@medusajs/cli/cli.js plugin:build && tsc",
+    "dev": "node ../node_modules/@medusajs/cli/cli.js plugin:develop",
+    "watch": "tsc --watch --preserveWatchOutput",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "@medusajs/framework": "^2.13.0",
+    "@medusajs/medusa": "^2.13.0"
+  },
+  "devDependencies": {
+    "@medusajs/cli": "^2.13.0",
+    "@swc/core": "^1.15.26",
+    "@types/react": "^18.3.2",
+    "@types/react-dom": "^18.2.25",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  },
+  "keywords": [
+    "medusa-plugin",
+    "medusa-v2",
+    "support-tickets",
+    "customer-support"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}

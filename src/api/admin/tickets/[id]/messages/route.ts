@@ -1,0 +1,38 @@
+import { MedusaRequest, MedusaResponse } from '@medusajs/framework/http'
+import SupportTicketModuleService from '../../../../../modules/support-ticket/service'
+import { SUPPORT_TICKET_MODULE, SenderType } from '../../../../../modules/support-ticket'
+
+type AdminMessageBody = {
+  message?: string
+  attachments?: Record<string, unknown>[]
+}
+
+export async function POST(
+  req: MedusaRequest<AdminMessageBody>,
+  res: MedusaResponse,
+) {
+  const { message, attachments } = req.body
+  if (!message?.trim()) {
+    return res.status(400).json({ message: 'Message is required.' })
+  }
+
+  const supportTicketService: SupportTicketModuleService =
+    req.scope.resolve(SUPPORT_TICKET_MODULE)
+
+  const result = await supportTicketService.getTicketWithMessages(req.params.id)
+  if (!result) {
+    return res.status(404).json({ message: 'Ticket not found' })
+  }
+
+  const adminId = (req as any).auth_context?.actor_id ?? 'admin'
+
+  const msg = await supportTicketService.addMessage({
+    ticketId: req.params.id,
+    message: message.trim(),
+    senderType: SenderType.ADMIN,
+    senderId: adminId,
+    attachments,
+  })
+
+  return res.status(201).json({ message: msg })
+}
