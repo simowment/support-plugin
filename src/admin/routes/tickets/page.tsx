@@ -13,7 +13,7 @@ import {
   Textarea,
   toast,
 } from '@medusajs/ui'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { adminFetch } from '../../lib/api'
 
 type Ticket = {
@@ -21,7 +21,6 @@ type Ticket = {
   subject: string
   category: string
   status: string
-  priority: string
   customer_id: string
   order_id: string | null
   closed_at: string | null
@@ -35,6 +34,14 @@ type TicketMessage = {
   sender_id: string | null
   message: string
   created_at: string
+  attachments: unknown
+}
+
+type Attachment = {
+  url: string
+  filename: string
+  mimeType: string
+  size: number
 }
 
 type TicketEvent = {
@@ -59,7 +66,7 @@ const STATUS_OPTIONS = [
   'closed',
 ]
 
-const PRIORITY_OPTIONS = ['low', 'medium', 'high', 'urgent']
+
 const CATEGORY_OPTIONS = [
   'order_issue',
   'return_request',
@@ -96,17 +103,26 @@ const statusColor = (status: string) => {
   return 'blue'
 }
 
-const priorityColor = (priority: string) => {
-  if (priority === 'urgent') {
-    return 'red'
+
+
+const formatFileSize = (bytes: number) => {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+const normalizeAttachments = (attachments: unknown): Attachment[] => {
+  if (!attachments) {
+    return []
   }
-  if (priority === 'high') {
-    return 'orange'
+  if (Array.isArray(attachments)) {
+    return attachments as Attachment[]
   }
-  if (priority === 'low') {
-    return 'grey'
+  if (typeof attachments === 'object' && attachments !== null && 'items' in attachments) {
+    const obj = attachments as { items: Attachment[] }
+    return Array.isArray(obj.items) ? obj.items : []
   }
-  return 'blue'
+  return []
 }
 
 export default function SupportTicketsPage() {
@@ -120,6 +136,9 @@ export default function SupportTicketsPage() {
   const [loadingTickets, setLoadingTickets] = useState(true)
   const [loadingDetails, setLoadingDetails] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([])
+  const [uploadingFiles, setUploadingFiles] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const selectedTicket = details?.ticket ?? tickets.find((ticket) => ticket.id === selectedTicketId)
 
@@ -181,7 +200,7 @@ export default function SupportTicketsPage() {
     }
   }
 
-  const updateTicket = async (updates: { status?: string; priority?: string }) => {
+  const updateTicket = async (updates: { status?: string }) => {
     if (!selectedTicketId) {
       return
     }
@@ -203,8 +222,39 @@ export default function SupportTicketsPage() {
     }
   }
 
+  const deleteTicket = async () => {
+    if (!selectedTicketId) {
+      return
+    }
+
+    const confirmed = window.confirm(
+      'Are you sure you want to delete this ticket? This action cannot be undone.',
+    )
+    if (!confirmed) {
+      return
+    }
+
+    setSaving(true)
+
+    try {
+      await adminFetch(`/admin/tickets/${selectedTicketId}`, {
+        method: 'DELETE',
+      })
+      setSelectedTicketId(null)
+      setDetails(null)
+      await fetchTickets()
+      toast.success('Ticket deleted')
+    } catch (error) {
+      toast.error('Failed to delete ticket', {
+        description: error instanceof Error ? error.message : 'Unknown error',
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const sendReply = async () => {
-    if (!selectedTicketId || !reply.trim()) {
+    if (!selectedTicketId || (!reply.trim() && pendingAttachments.length === 0)) {
       return
     }
 
@@ -213,9 +263,10 @@ export default function SupportTicketsPage() {
     try {
       await adminFetch(`/admin/tickets/${selectedTicketId}/messages`, {
         method: 'POST',
-        body: { message: reply.trim() },
+        body: { message: reply.trim() || '(attachment)', attachments: pendingAttachments },
       })
       setReply('')
+      setPendingAttachments([])
       await Promise.all([fetchTickets(), fetchDetails(selectedTicketId)])
     } catch (error) {
       toast.error('Failed to send reply', {
@@ -224,6 +275,52 @@ export default function SupportTicketsPage() {
     } finally {
       setSaving(false)
     }
+  }
+
+  const uploadFiles = async (files: FileList) => {
+    if (!files || files.length === 0) {
+      return
+    }
+
+    setUploadingFiles(true)
+
+    try {
+      const formData = new FormData()
+      for (let i = 0; i < files.length; i++) {
+        formData.append('files', files[i])
+      }
+
+      const response = await fetch('/admin/tickets/upload', {
+        method: 'POST',
+        body: formData,
+        credentials: 'include',
+      })
+
+      if (!response.ok) {
+        throw new Error('Upload failed')
+      }
+
+      const data = await response.json()
+      const newAttachments: Attachment[] = data.attachments ?? []
+      setPendingAttachments((prev) => [...prev, ...newAttachments])
+    } catch (error) {
+      toast.error('Failed to upload file', {
+        description: error instanceof Error ? error.message : 'Unknown error',
+      })
+    } finally {
+      setUploadingFiles(false)
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+    }
+  }
+
+  const removePendingAttachment = (index: number) => {
+    setPendingAttachments((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  const handleAttachClick = () => {
+    fileInputRef.current?.click()
   }
 
   useEffect(() => {
@@ -300,7 +397,6 @@ export default function SupportTicketsPage() {
                 <Table.Row>
                   <Table.HeaderCell>Ticket</Table.HeaderCell>
                   <Table.HeaderCell>Status</Table.HeaderCell>
-                  <Table.HeaderCell>Priority</Table.HeaderCell>
                   <Table.HeaderCell>Updated</Table.HeaderCell>
                 </Table.Row>
               </Table.Header>
@@ -324,11 +420,6 @@ export default function SupportTicketsPage() {
                     <Table.Cell>
                       <Badge size="2xsmall" color={statusColor(ticket.status)}>
                         {formatLabel(ticket.status)}
-                      </Badge>
-                    </Table.Cell>
-                    <Table.Cell>
-                      <Badge size="2xsmall" color={priorityColor(ticket.priority)}>
-                        {formatLabel(ticket.priority)}
                       </Badge>
                     </Table.Cell>
                     <Table.Cell>
@@ -356,19 +447,35 @@ export default function SupportTicketsPage() {
                     <Heading level="h2" className="truncate">
                       {selectedTicket.subject}
                     </Heading>
-                    <Text size="small" className="text-ui-fg-subtle mt-1">
+                    <a
+                      href={`/customers/${selectedTicket.customer_id}`}
+                      className="mt-1 inline-block text-small text-ui-fg-subtle hover:text-ui-fg-base"
+                    >
                       Customer {selectedTicket.customer_id}
-                    </Text>
+                    </a>
                     {selectedTicket.order_id ? (
-                      <Text size="small" className="text-ui-fg-subtle">
+                      <a
+                        href={`/orders/${selectedTicket.order_id}`}
+                        className="inline-block text-small text-ui-fg-subtle hover:text-ui-fg-base"
+                      >
                         Order {selectedTicket.order_id}
-                      </Text>
+                      </a>
                     ) : null}
                   </div>
-                  {loadingDetails ? <Spinner className="animate-spin" /> : null}
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="danger"
+                      size="small"
+                      onClick={deleteTicket}
+                      disabled={saving}
+                    >
+                      Delete
+                    </Button>
+                    {loadingDetails ? <Spinner className="animate-spin" /> : null}
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div>
                   <div>
                     <Label>Status</Label>
                     <Select
@@ -383,25 +490,6 @@ export default function SupportTicketsPage() {
                         {STATUS_OPTIONS.map((status) => (
                           <Select.Item key={status} value={status}>
                             {formatLabel(status)}
-                          </Select.Item>
-                        ))}
-                      </Select.Content>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label>Priority</Label>
-                    <Select
-                      value={selectedTicket.priority}
-                      onValueChange={(priority) => updateTicket({ priority })}
-                      disabled={saving}
-                    >
-                      <Select.Trigger>
-                        <Select.Value />
-                      </Select.Trigger>
-                      <Select.Content>
-                        {PRIORITY_OPTIONS.map((priority) => (
-                          <Select.Item key={priority} value={priority}>
-                            {formatLabel(priority)}
                           </Select.Item>
                         ))}
                       </Select.Content>
@@ -430,6 +518,27 @@ export default function SupportTicketsPage() {
                       <Text size="small" className="whitespace-pre-wrap">
                         {message.message}
                       </Text>
+                      {(() => {
+                        const messageAttachments = normalizeAttachments(message.attachments)
+                        if (messageAttachments.length === 0) {
+                          return null
+                        }
+                        return (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {messageAttachments.map((attachment, index) => (
+                              <a
+                                key={index}
+                                href={attachment.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-small text-ui-fg-interactive hover:underline"
+                              >
+                                📄 {attachment.filename}
+                              </a>
+                            ))}
+                          </div>
+                        )
+                      })()}
                     </div>
                   ))
                 ) : (
@@ -446,8 +555,46 @@ export default function SupportTicketsPage() {
                   onChange={(event) => setReply(event.target.value)}
                   placeholder="Write a response to the customer"
                 />
-                <div className="mt-3 flex justify-end">
-                  <Button onClick={sendReply} disabled={!reply.trim() || saving} isLoading={saving}>
+                {pendingAttachments.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {pendingAttachments.map((attachment, index) => (
+                      <Badge
+                        key={index}
+                        size="small"
+                        className="flex items-center gap-1 pr-1"
+                      >
+                        <span className="max-w-32 truncate">{attachment.filename}</span>
+                        <span className="text-ui-fg-subtle">({formatFileSize(attachment.size)})</span>
+                        <button
+                          type="button"
+                          onClick={() => removePendingAttachment(index)}
+                          className="ml-1 cursor-pointer text-ui-fg-subtle hover:text-ui-fg-base"
+                        >
+                          ×
+                        </button>
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept="image/*,.pdf,.doc,.docx,.txt,.csv,.xlsx"
+                  onChange={(event) => event.target.files && uploadFiles(event.target.files)}
+                  className="hidden"
+                />
+                <div className="mt-3 flex justify-end gap-2">
+                  <Button
+                    variant="secondary"
+                    size="small"
+                    onClick={handleAttachClick}
+                    disabled={uploadingFiles}
+                    isLoading={uploadingFiles}
+                  >
+                    Attach
+                  </Button>
+                  <Button onClick={sendReply} disabled={(!reply.trim() && pendingAttachments.length === 0) || saving} isLoading={saving}>
                     Send Reply
                   </Button>
                 </div>

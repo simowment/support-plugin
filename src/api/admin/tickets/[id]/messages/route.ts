@@ -12,8 +12,8 @@ export async function POST(
   res: MedusaResponse,
 ) {
   const { message, attachments } = req.body
-  if (!message?.trim()) {
-    return res.status(400).json({ message: 'Message is required.' })
+  if (!message?.trim() && !attachments?.length) {
+    return res.status(400).json({ message: 'Message or attachments are required.' })
   }
 
   const supportTicketService: SupportTicketModuleService =

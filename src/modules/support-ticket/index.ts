@@ -9,10 +9,10 @@ export default Module(SUPPORT_TICKET_MODULE, {
 export { SUPPORT_TICKET_MODULE } from './constants'
 export {
   TicketStatus,
-  TicketPriority,
   TicketCategory,
   SenderType,
   TicketEventType,
+  TicketEventName,
 } from './constants'
 export { Ticket } from './models/ticket'
 export { TicketMessage } from './models/ticket-message'

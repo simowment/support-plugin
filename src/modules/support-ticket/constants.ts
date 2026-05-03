@@ -11,14 +11,7 @@ export const TicketStatus = {
 
 export type TicketStatus = (typeof TicketStatus)[keyof typeof TicketStatus]
 
-export const TicketPriority = {
-  LOW: 'low',
-  MEDIUM: 'medium',
-  HIGH: 'high',
-  URGENT: 'urgent',
-} as const
 
-export type TicketPriority = (typeof TicketPriority)[keyof typeof TicketPriority]
 
 export const TicketCategory = {
   ORDER_ISSUE: 'order_issue',
@@ -41,11 +34,19 @@ export type SenderType = (typeof SenderType)[keyof typeof SenderType]
 
 export const TicketEventType = {
   STATUS_CHANGED: 'status_changed',
-  PRIORITY_CHANGED: 'priority_changed',
   MESSAGE_ADDED: 'message_added',
   TICKET_CREATED: 'ticket_created',
   TICKET_CLOSED: 'ticket_closed',
   TICKET_REOPENED: 'ticket_reopened',
+  TICKET_DELETED: 'ticket_deleted',
 } as const
 
 export type TicketEventType = (typeof TicketEventType)[keyof typeof TicketEventType]
+
+export const TicketEventName = {
+  CREATED: 'support_ticket.created',
+  MESSAGE_ADDED: 'support_ticket.message_added',
+  UPDATED: 'support_ticket.updated',
+  CLOSED: 'support_ticket.closed',
+  DELETED: 'support_ticket.deleted',
+} as const

@@ -1,12 +1,13 @@
 import { MedusaService } from '@medusajs/framework/utils'
+import type { IEventBusModuleService } from '@medusajs/framework/types'
 import { Ticket } from './models/ticket'
 import { TicketMessage } from './models/ticket-message'
 import { TicketEvent } from './models/ticket-event'
 import {
   TicketStatus,
   TicketEventType,
+  TicketEventName,
   type TicketCategory,
-  type TicketPriority,
   type SenderType,
 } from './constants'
 
@@ -15,7 +16,6 @@ type TicketRecord = {
   subject: string
   category: string
   status: string
-  priority: string
   customer_id: string
   order_id: string | null
   closed_at: Date | null
@@ -29,7 +29,6 @@ type CreateTicketInput = {
   category: TicketCategory
   customerId: string
   orderId?: string
-  priority?: TicketPriority
   message: string
   metadata?: Record<string, unknown>
 }
@@ -44,7 +43,6 @@ type AddMessageInput = {
 
 type UpdateTicketInput = {
   status?: TicketStatus
-  priority?: TicketPriority
 }
 
 export default class SupportTicketModuleService extends MedusaService({
@@ -52,13 +50,20 @@ export default class SupportTicketModuleService extends MedusaService({
   TicketMessage,
   TicketEvent,
 }) {
+  protected eventBusService_: IEventBusModuleService
+
+  constructor(container: Record<string, unknown>) {
+    super(...arguments)
+    // @ts-expect-error - injected via module dependencies
+    this.eventBusService_ = container.event_bus
+  }
+
   async createTicket(input: CreateTicketInput): Promise<TicketRecord> {
     const [ticket] = await this.createTickets([
       {
         subject: input.subject,
         category: input.category,
         status: TicketStatus.OPEN,
-        priority: input.priority ?? 'medium',
         customer_id: input.customerId,
         order_id: input.orderId ?? null,
         metadata: input.metadata ?? null,
@@ -84,6 +89,18 @@ export default class SupportTicketModuleService extends MedusaService({
         performed_by_id: input.customerId,
       },
     ])
+
+    await this.eventBusService_?.emit({
+      name: TicketEventName.CREATED,
+      data: {
+        id: ticket.id,
+        subject: input.subject,
+        category: input.category,
+        customer_id: input.customerId,
+        order_id: input.orderId ?? null,
+        message: input.message,
+      },
+    })
 
     return ticket as unknown as TicketRecord
   }
@@ -120,6 +137,17 @@ export default class SupportTicketModuleService extends MedusaService({
     } else if (input.senderType === 'admin') {
       await this.updateTickets([{ id: input.ticketId, status: TicketStatus.WAITING_CUSTOMER }])
     }
+
+    await this.eventBusService_?.emit({
+      name: TicketEventName.MESSAGE_ADDED,
+      data: {
+        ticket_id: input.ticketId,
+        message_id: (message as any).id,
+        sender_type: input.senderType,
+        sender_id: input.senderId ?? null,
+        message: input.message,
+      },
+    })
 
     return message
   }
@@ -178,18 +206,7 @@ export default class SupportTicketModuleService extends MedusaService({
       }
     }
 
-    if (input.priority) {
-      const oldPriority = (current as any)?.priority as string
 
-      updates.priority = input.priority
-      events.push({
-        ticket: ticketId,
-        event_type: TicketEventType.PRIORITY_CHANGED,
-        data: { old_priority: oldPriority, new_priority: input.priority },
-        performed_by_type: performedByType ?? null,
-        performed_by_id: performedById ?? null,
-      })
-    }
 
     const [updated] = await this.updateTickets([updates])
 
@@ -198,6 +215,28 @@ export default class SupportTicketModuleService extends MedusaService({
     }
 
     return updated
+  }
+
+  async deleteTicket(ticketId: string, performedByType?: string, performedById?: string) {
+    const [ticket] = await this.listTickets({ id: ticketId }, { take: 1 })
+    if (!ticket) {
+      return null
+    }
+
+    await this.deleteTicketMessages({ ticket: ticketId })
+    await this.deleteTicketEvents({ ticket: ticketId })
+    await this.deleteTickets({ id: ticketId })
+
+    await this.eventBusService_?.emit({
+      name: TicketEventName.DELETED,
+      data: {
+        id: ticketId,
+        performed_by_type: performedByType ?? null,
+        performed_by_id: performedById ?? null,
+      },
+    })
+
+    return { id: ticketId }
   }
 
   async listCustomerTickets(customerId: string, filters?: { status?: string }) {

@@ -8,7 +8,6 @@ export const Ticket = model
     subject: model.text(),
     category: model.text(),
     status: model.text().default('open'),
-    priority: model.text().default('medium'),
     customer_id: model.text(),
     order_id: model.text().nullable(),
     closed_at: model.dateTime().nullable(),
@@ -28,7 +27,7 @@ export const Ticket = model
       on: ['order_id'],
     },
     {
-      on: ['status', 'priority'],
+      on: ['status'],
     },
     {
       on: ['category'],

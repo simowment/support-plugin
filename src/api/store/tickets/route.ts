@@ -1,18 +1,16 @@
 import { AuthenticatedMedusaRequest, MedusaResponse } from '@medusajs/framework/http'
 import SupportTicketModuleService from '../../../modules/support-ticket/service'
-import { SUPPORT_TICKET_MODULE, TicketCategory, TicketPriority } from '../../../modules/support-ticket'
+import { SUPPORT_TICKET_MODULE, TicketCategory } from '../../../modules/support-ticket'
 
 type CreateTicketBody = {
   subject?: string
   category?: string
-  priority?: string
   message?: string
   order_id?: string
   metadata?: Record<string, unknown>
 }
 
 const VALID_CATEGORIES = new Set<string>(Object.values(TicketCategory))
-const VALID_PRIORITIES = new Set<string>(Object.values(TicketPriority))
 
 export async function POST(
   req: AuthenticatedMedusaRequest<CreateTicketBody>,
@@ -23,7 +21,7 @@ export async function POST(
     return res.status(401).json({ message: 'Authentication required' })
   }
 
-  const { subject, category, priority, message, order_id, metadata } = req.body
+  const { subject, category, message, order_id, metadata } = req.body
 
   if (!subject?.trim()) {
     return res.status(400).json({ message: 'Subject is required.' })
@@ -36,11 +34,7 @@ export async function POST(
       message: `Category is required. Valid values: ${Object.values(TicketCategory).join(', ')}`,
     })
   }
-  if (priority && !VALID_PRIORITIES.has(priority)) {
-    return res.status(400).json({
-      message: `Invalid priority. Valid values: ${Object.values(TicketPriority).join(', ')}`,
-    })
-  }
+
 
   const supportTicketService: SupportTicketModuleService =
     req.scope.resolve(SUPPORT_TICKET_MODULE)
@@ -50,7 +44,6 @@ export async function POST(
     category: category as TicketCategory,
     customerId,
     orderId: order_id,
-    priority: (priority as TicketPriority) ?? undefined,
     message: message.trim(),
     metadata,
   })
