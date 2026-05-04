@@ -31,7 +31,7 @@ export async function POST(
 
   const msg = await supportTicketService.addMessage({
     ticketId: req.params.id,
-    message: message.trim(),
+    message: message?.trim() || '(attachment)',
     senderType: SenderType.CUSTOMER,
     senderId: customerId,
     attachments,
