@@ -18,6 +18,8 @@ export async function adminFetch<T>(path: string, options: FetchOptions = {}): P
       const data = await response.json()
       if (typeof data?.message === 'string') {
         message = data.message
+      } else if (typeof data?.error === 'string') {
+        message = data.error
       }
     } catch {
       // Keep the status fallback when the response is not JSON.

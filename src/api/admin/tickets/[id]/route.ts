@@ -14,10 +14,10 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
 
   const result = await supportTicketService.getTicketWithMessages(req.params.id)
   if (!result) {
-    return res.status(404).json({ message: 'Ticket not found' })
+    return res.status(404).json({ success: false, error: 'Ticket not found' })
   }
 
-  return res.json(result)
+  return res.json({ success: true, ...result })
 }
 
 export async function PATCH(
@@ -28,7 +28,8 @@ export async function PATCH(
 
   if (status && !VALID_STATUSES.has(status)) {
     return res.status(400).json({
-      message: `Invalid status. Valid values: ${Object.values(TicketStatus).join(', ')}`,
+      success: false,
+      error: `Invalid status. Valid values: ${Object.values(TicketStatus).join(', ')}`,
     })
   }
 
@@ -45,10 +46,10 @@ export async function PATCH(
     (req as any).auth_context?.actor_id,
   )
   if (!ticket) {
-    return res.status(404).json({ message: 'Ticket not found' })
+    return res.status(404).json({ success: false, error: 'Ticket not found' })
   }
 
-  return res.json({ ticket })
+  return res.json({ success: true, ticket })
 }
 
 export async function DELETE(req: MedusaRequest, res: MedusaResponse) {
@@ -61,8 +62,8 @@ export async function DELETE(req: MedusaRequest, res: MedusaResponse) {
     (req as any).auth_context?.actor_id,
   )
   if (!deleted) {
-    return res.status(404).json({ message: 'Ticket not found' })
+    return res.status(404).json({ success: false, error: 'Ticket not found' })
   }
 
-  return res.json({ id: deleted.id, deleted: true })
+  return res.json({ success: true, id: deleted.id, deleted: true })
 }

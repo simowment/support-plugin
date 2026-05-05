@@ -21,20 +21,5 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
     skip: parseInt(req.query['offset'] as string) || 0,
   })
 
-  // Diagnostic
-  const svc = supportTicketService as any
-  const container = svc.__container__
-  const allKeys = container ? Object.keys(container) : []
-  const repoKeys = allKeys.filter(k => k.toLowerCase().includes('repository') || k.toLowerCase().includes('manager'))
-  const repoStates: Record<string, string> = {}
-  for (const k of repoKeys) {
-    const val = container[k]
-    if (val && typeof val === 'object') {
-      repoStates[k] = `type=${val.constructor?.name}, hasManager_=${!!val.manager_}`
-    } else {
-      repoStates[k] = `value=${String(val)}`
-    }
-  }
-
-  return res.json({ tickets, _debug: { allKeys, repoStates, keyCount: allKeys.length } })
+  return res.json({ tickets })
 }

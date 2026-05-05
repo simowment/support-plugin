@@ -8,7 +8,7 @@ export async function GET(
 ) {
   const customerId = req.auth_context?.actor_id
   if (!customerId) {
-    return res.status(401).json({ message: 'Authentication required' })
+    return res.status(401).json({ success: false, error: 'Authentication required' })
   }
 
   const supportTicketService: SupportTicketModuleService =
@@ -16,12 +16,12 @@ export async function GET(
 
   const result = await supportTicketService.getTicketWithMessages(req.params.id)
   if (!result) {
-    return res.status(404).json({ message: 'Ticket not found' })
+    return res.status(404).json({ success: false, error: 'Ticket not found' })
   }
 
   if ((result.ticket as any).customer_id !== customerId) {
-    return res.status(404).json({ message: 'Ticket not found' })
+    return res.status(404).json({ success: false, error: 'Ticket not found' })
   }
 
-  return res.json(result)
+  return res.json({ success: true, ...result })
 }

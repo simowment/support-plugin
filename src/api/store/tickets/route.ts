@@ -18,20 +18,21 @@ export async function POST(
 ) {
   const customerId = req.auth_context?.actor_id
   if (!customerId) {
-    return res.status(401).json({ message: 'Authentication required' })
+    return res.status(401).json({ success: false, error: 'Authentication required' })
   }
 
   const { subject, category, message, order_id, metadata } = req.body
 
   if (!subject?.trim()) {
-    return res.status(400).json({ message: 'Subject is required.' })
+    return res.status(400).json({ success: false, error: 'Subject is required.' })
   }
   if (!message?.trim()) {
-    return res.status(400).json({ message: 'Message is required.' })
+    return res.status(400).json({ success: false, error: 'Message is required.' })
   }
   if (!category || !VALID_CATEGORIES.has(category)) {
     return res.status(400).json({
-      message: `Category is required. Valid values: ${Object.values(TicketCategory).join(', ')}`,
+      success: false,
+      error: `Category is required. Valid values: ${Object.values(TicketCategory).join(', ')}`,
     })
   }
 
@@ -48,7 +49,7 @@ export async function POST(
     metadata,
   })
 
-  return res.status(201).json({ ticket })
+  return res.status(201).json({ success: true, ticket })
 }
 
 export async function GET(
@@ -57,7 +58,7 @@ export async function GET(
 ) {
   const customerId = req.auth_context?.actor_id
   if (!customerId) {
-    return res.status(401).json({ message: 'Authentication required' })
+    return res.status(401).json({ success: false, error: 'Authentication required' })
   }
 
   const supportTicketService: SupportTicketModuleService =
@@ -69,5 +70,5 @@ export async function GET(
     status ? { status } : undefined,
   )
 
-  return res.json({ tickets })
+  return res.json({ success: true, tickets })
 }

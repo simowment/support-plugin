@@ -5,7 +5,7 @@ import { uploadFilesWorkflow } from '@medusajs/medusa/core-flows'
 export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse) {
   const customerId = req.auth_context?.actor_id
   if (!customerId) {
-    return res.status(401).json({ message: 'Authentication required' })
+    return res.status(401).json({ success: false, error: 'Authentication required' })
   }
 
   const files = req.files as Express.Multer.File[]
@@ -32,5 +32,5 @@ export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse)
     size: files[index].size,
   }))
 
-  return res.status(201).json({ attachments })
+  return res.status(201).json({ success: true, attachments })
 }

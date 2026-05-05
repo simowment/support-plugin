@@ -13,7 +13,7 @@ export async function POST(
 ) {
   const { message, attachments } = req.body
   if (!message?.trim() && !attachments?.length) {
-    return res.status(400).json({ message: 'Message or attachments are required.' })
+    return res.status(400).json({ success: false, error: 'Message or attachments are required.' })
   }
 
   const supportTicketService: SupportTicketModuleService =
@@ -21,7 +21,7 @@ export async function POST(
 
   const result = await supportTicketService.getTicketWithMessages(req.params.id)
   if (!result) {
-    return res.status(404).json({ message: 'Ticket not found' })
+    return res.status(404).json({ success: false, error: 'Ticket not found' })
   }
 
   const adminId = (req as any).auth_context?.actor_id ?? 'admin'
@@ -34,5 +34,5 @@ export async function POST(
     attachments,
   })
 
-  return res.status(201).json({ message: msg })
+  return res.status(201).json({ success: true, message: msg })
 }

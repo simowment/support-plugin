@@ -27,5 +27,5 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     size: files[index].size,
   }))
 
-  return res.status(201).json({ attachments })
+  return res.status(201).json({ success: true, attachments })
 }
