@@ -11,8 +11,6 @@ export const TicketStatus = {
 
 export type TicketStatus = (typeof TicketStatus)[keyof typeof TicketStatus]
 
-
-
 export const TicketCategory = {
   ORDER_ISSUE: 'order_issue',
   RETURN_REQUEST: 'return_request',
@@ -34,6 +32,8 @@ export type SenderType = (typeof SenderType)[keyof typeof SenderType]
 
 export const TicketEventType = {
   STATUS_CHANGED: 'status_changed',
+  ASSIGNED: 'assigned',
+  UNASSIGNED: 'unassigned',
   MESSAGE_ADDED: 'message_added',
   TICKET_CREATED: 'ticket_created',
   TICKET_CLOSED: 'ticket_closed',
@@ -50,3 +50,5 @@ export const TicketEventName = {
   CLOSED: 'support_ticket.closed',
   DELETED: 'support_ticket.deleted',
 } as const
+
+export type TicketEventName = (typeof TicketEventName)[keyof typeof TicketEventName]

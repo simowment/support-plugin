@@ -17,4 +17,5 @@ export {
 export { Ticket } from './models/ticket'
 export { TicketMessage } from './models/ticket-message'
 export { TicketEvent } from './models/ticket-event'
+export { TicketNote } from './models/ticket-note'
 export type { default as SupportTicketModuleService } from './service'

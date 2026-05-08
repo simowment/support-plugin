@@ -11,3 +11,6 @@ export const TicketMessage = model.define('ticket_message', {
   message: model.text(),
   attachments: model.json().nullable(),
 })
+  .indexes([
+    { on: ['ticket_id'] },
+  ])

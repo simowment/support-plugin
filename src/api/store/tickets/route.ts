@@ -1,6 +1,6 @@
 import { AuthenticatedMedusaRequest, MedusaResponse } from '@medusajs/framework/http'
-import SupportTicketModuleService from '../../../modules/support-ticket/service'
-import { SUPPORT_TICKET_MODULE, TicketCategory } from '../../../modules/support-ticket'
+import { resolveTicketService, requireAuth, validateEnum, VALID_CATEGORIES, parsePagination } from '../../shared/helpers'
+import { TicketCategory } from '../../../modules/support-ticket'
 
 type CreateTicketBody = {
   subject?: string
@@ -10,37 +10,22 @@ type CreateTicketBody = {
   metadata?: Record<string, unknown>
 }
 
-const VALID_CATEGORIES = new Set<string>(Object.values(TicketCategory))
-
-export async function POST(
-  req: AuthenticatedMedusaRequest<CreateTicketBody>,
-  res: MedusaResponse,
-) {
-  const customerId = req.auth_context?.actor_id
-  if (!customerId) {
-    return res.status(401).json({ success: false, error: 'Authentication required' })
-  }
+export async function POST(req: AuthenticatedMedusaRequest<CreateTicketBody>, res: MedusaResponse) {
+  const customerId = requireAuth(req, res)
+  if (!customerId) return
 
   const { subject, category, message, order_id, metadata } = req.body
 
-  if (!subject?.trim()) {
-    return res.status(400).json({ success: false, error: 'Subject is required.' })
-  }
-  if (!message?.trim()) {
-    return res.status(400).json({ success: false, error: 'Message is required.' })
-  }
-  if (!category || !VALID_CATEGORIES.has(category)) {
-    return res.status(400).json({
-      success: false,
-      error: `Category is required. Valid values: ${Object.values(TicketCategory).join(', ')}`,
-    })
+  if (!subject?.trim()) return res.status(400).json({ success: false, error: 'Subject is required.' })
+  if (!message?.trim()) return res.status(400).json({ success: false, error: 'Message is required.' })
+
+  const categoryError = validateEnum(category, VALID_CATEGORIES, 'category')
+  if (!category || categoryError) {
+    return res.status(400).json({ success: false, error: categoryError || 'Category is required.' })
   }
 
-
-  const supportTicketService: SupportTicketModuleService =
-    req.scope.resolve(SUPPORT_TICKET_MODULE)
-
-  const ticket = await supportTicketService.createTicket({
+  const service = resolveTicketService(req)
+  const ticket = await service.createTicket({
     subject: subject.trim(),
     category: category as TicketCategory,
     customerId,
@@ -52,23 +37,14 @@ export async function POST(
   return res.status(201).json({ success: true, ticket })
 }
 
-export async function GET(
-  req: AuthenticatedMedusaRequest,
-  res: MedusaResponse,
-) {
-  const customerId = req.auth_context?.actor_id
-  if (!customerId) {
-    return res.status(401).json({ success: false, error: 'Authentication required' })
-  }
+export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) {
+  const customerId = requireAuth(req, res)
+  if (!customerId) return
 
-  const supportTicketService: SupportTicketModuleService =
-    req.scope.resolve(SUPPORT_TICKET_MODULE)
-
+  const service = resolveTicketService(req)
+  const { take, skip } = parsePagination(req)
   const status = req.query['status'] as string | undefined
-  const tickets = await supportTicketService.listCustomerTickets(
-    customerId,
-    status ? { status } : undefined,
-  )
 
+  const tickets = await service.listCustomerTickets(customerId, { status }, { take, skip })
   return res.json({ success: true, tickets })
 }

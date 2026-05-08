@@ -13,7 +13,7 @@ import {
   Textarea,
   toast,
 } from '@medusajs/ui'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { adminFetch } from '../../lib/api'
 
 type Ticket = {
@@ -21,6 +21,7 @@ type Ticket = {
   subject: string
   category: string
   status: string
+  assigned_to: string | null
   customer_id: string
   order_id: string | null
   closed_at: string | null
@@ -44,6 +45,15 @@ type Attachment = {
   size: number
 }
 
+type TicketNote = {
+  id: string
+  ticket_id: string
+  content: string
+  author_id: string | null
+  created_at: string
+  updated_at: string
+}
+
 type TicketEvent = {
   id: string
   event_type: string
@@ -55,6 +65,7 @@ type TicketDetails = {
   ticket: Ticket
   messages: TicketMessage[]
   events: TicketEvent[]
+  notes: TicketNote[]
 }
 
 const STATUS_OPTIONS = [
@@ -65,7 +76,6 @@ const STATUS_OPTIONS = [
   'resolved',
   'closed',
 ]
-
 
 const CATEGORY_OPTIONS = [
   'order_issue',
@@ -86,7 +96,6 @@ const formatDate = (value?: string | null) => {
   if (!value) {
     return 'N/A'
   }
-
   return new Date(value).toLocaleString()
 }
 
@@ -94,7 +103,7 @@ const statusColor = (status: string) => {
   if (status === 'closed' || status === 'resolved') {
     return 'green'
   }
-  if (status === 'urgent' || status === 'waiting_admin') {
+  if (status === 'waiting_admin') {
     return 'red'
   }
   if (status === 'waiting_customer') {
@@ -102,8 +111,6 @@ const statusColor = (status: string) => {
   }
   return 'blue'
 }
-
-
 
 const formatFileSize = (bytes: number) => {
   if (bytes < 1024) return `${bytes} B`
@@ -125,6 +132,11 @@ const normalizeAttachments = (attachments: unknown): Attachment[] => {
   return []
 }
 
+const getAttachmentUrl = (attachment: Attachment) => {
+  const separator = attachment.url.includes('?') ? '&' : '?'
+  return `${attachment.url}${separator}v=${attachment.size}`
+}
+
 export default function SupportTicketsPage() {
   const [tickets, setTickets] = useState<Ticket[]>([])
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null)
@@ -139,6 +151,13 @@ export default function SupportTicketsPage() {
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([])
   const [uploadingFiles, setUploadingFiles] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [customerName, setCustomerName] = useState<string | null>(null)
+  const [customerEmail, setCustomerEmail] = useState<string | null>(null)
+  const [assignedToInput, setAssignedToInput] = useState('')
+  const [loadingCustomer, setLoadingCustomer] = useState(false)
+  // Notes
+  const [noteContent, setNoteContent] = useState('')
+  const [addingNote, setAddingNote] = useState(false)
 
   const selectedTicket = details?.ticket ?? tickets.find((ticket) => ticket.id === selectedTicketId)
 
@@ -155,7 +174,6 @@ export default function SupportTicketsPage() {
       if (!term) {
         return true
       }
-
       return (
         ticket.subject.toLowerCase().includes(term) ||
         ticket.customer_id.toLowerCase().includes(term) ||
@@ -165,13 +183,11 @@ export default function SupportTicketsPage() {
     })
   }, [tickets, statusFilter, categoryFilter, search])
 
-  const fetchTickets = async () => {
+  const fetchTickets = useCallback(async () => {
     setLoadingTickets(true)
-
     try {
       const data = await adminFetch<{ tickets: Ticket[] }>('/admin/tickets?limit=100')
       setTickets(data.tickets ?? [])
-
       if (!selectedTicketId && data.tickets?.[0]) {
         setSelectedTicketId(data.tickets[0].id)
       }
@@ -182,11 +198,10 @@ export default function SupportTicketsPage() {
     } finally {
       setLoadingTickets(false)
     }
-  }
+  }, [selectedTicketId])
 
-  const fetchDetails = async (ticketId: string) => {
+  const fetchDetails = useCallback(async (ticketId: string) => {
     setLoadingDetails(true)
-
     try {
       const data = await adminFetch<TicketDetails>(`/admin/tickets/${ticketId}`)
       setDetails(data)
@@ -198,21 +213,41 @@ export default function SupportTicketsPage() {
     } finally {
       setLoadingDetails(false)
     }
-  }
+  }, [])
 
-  const updateTicket = async (updates: { status?: string }) => {
-    if (!selectedTicketId) {
-      return
+  const fetchCustomer = useCallback(async (customerId: string) => {
+    setLoadingCustomer(true)
+    try {
+      const data = await adminFetch<{ customer: { first_name?: string; last_name?: string; email?: string } }>(
+        `/admin/customers/${customerId}`
+      )
+      const customer = data.customer
+      if (customer) {
+        const name = [customer.first_name, customer.last_name].filter(Boolean).join(' ') || customerId
+        setCustomerName(name)
+        setCustomerEmail(customer.email ?? null)
+      }
+    } catch {
+      setCustomerName(null)
+      setCustomerEmail(null)
+    } finally {
+      setLoadingCustomer(false)
     }
+  }, [])
 
+  const updateTicket = async (updates: { status?: string; assigned_to?: string | null }) => {
+    if (!selectedTicketId) return
     setSaving(true)
-
     try {
       await adminFetch<{ ticket: Ticket }>(`/admin/tickets/${selectedTicketId}`, {
         method: 'PATCH',
         body: updates,
       })
-      await Promise.all([fetchTickets(), fetchDetails(selectedTicketId)])
+      await fetchDetails(selectedTicketId)
+      await fetchTickets()
+      if (updates.status) {
+        toast.success(`Status updated to ${formatLabel(updates.status)}`)
+      }
     } catch (error) {
       toast.error('Failed to update ticket', {
         description: error instanceof Error ? error.message : 'Unknown error',
@@ -222,52 +257,25 @@ export default function SupportTicketsPage() {
     }
   }
 
-  const deleteTicket = async () => {
-    if (!selectedTicketId) {
-      return
-    }
-
-    const confirmed = window.confirm(
-      'Are you sure you want to delete this ticket? This action cannot be undone.',
-    )
-    if (!confirmed) {
-      return
-    }
-
-    setSaving(true)
-
-    try {
-      await adminFetch(`/admin/tickets/${selectedTicketId}`, {
-        method: 'DELETE',
-      })
-      setSelectedTicketId(null)
-      setDetails(null)
-      await fetchTickets()
-      toast.success('Ticket deleted')
-    } catch (error) {
-      toast.error('Failed to delete ticket', {
-        description: error instanceof Error ? error.message : 'Unknown error',
-      })
-    } finally {
-      setSaving(false)
-    }
-  }
-
   const sendReply = async () => {
-    if (!selectedTicketId || (!reply.trim() && pendingAttachments.length === 0)) {
-      return
-    }
-
+    if (!selectedTicketId) return
+    if (!reply.trim() && pendingAttachments.length === 0) return
     setSaving(true)
-
     try {
-      await adminFetch(`/admin/tickets/${selectedTicketId}/messages`, {
-        method: 'POST',
-        body: { message: reply.trim() || '(attachment)', attachments: pendingAttachments },
-      })
+      const body: Record<string, unknown> = { message: reply.trim() || '(attachment)' }
+      if (pendingAttachments.length > 0) {
+        body.attachments = pendingAttachments.map((a) => ({
+          url: a.url,
+          filename: a.filename,
+          mimeType: a.mimeType,
+          size: a.size,
+        }))
+      }
+      await adminFetch(`/admin/tickets/${selectedTicketId}/messages`, { method: 'POST', body })
       setReply('')
       setPendingAttachments([])
-      await Promise.all([fetchTickets(), fetchDetails(selectedTicketId)])
+      toast.success('Reply sent')
+      await fetchDetails(selectedTicketId)
     } catch (error) {
       toast.error('Failed to send reply', {
         description: error instanceof Error ? error.message : 'Unknown error',
@@ -278,109 +286,127 @@ export default function SupportTicketsPage() {
   }
 
   const uploadFiles = async (files: FileList) => {
-    if (!files || files.length === 0) {
-      return
-    }
-
+    if (files.length === 0) return
     setUploadingFiles(true)
-
     try {
       const formData = new FormData()
       for (let i = 0; i < files.length; i++) {
         formData.append('files', files[i])
       }
-
-      const response = await fetch('/admin/tickets/upload', {
+      const result = await adminFetch<{ attachments: Attachment[] }>('/admin/tickets/upload', {
         method: 'POST',
         body: formData,
-        credentials: 'include',
-      })
-
-      if (!response.ok) {
-        throw new Error('Upload failed')
-      }
-
-      const data = await response.json()
-      const newAttachments: Attachment[] = data.attachments ?? []
-      setPendingAttachments((prev) => [...prev, ...newAttachments])
+        // Let adminFetch use fetch with FormData (no Content-Type header)
+      } as any)
+      setPendingAttachments((prev) => [...prev, ...result.attachments])
     } catch (error) {
-      toast.error('Failed to upload file', {
+      toast.error('File upload failed', {
         description: error instanceof Error ? error.message : 'Unknown error',
       })
     } finally {
       setUploadingFiles(false)
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ''
-      }
     }
   }
 
-  const removePendingAttachment = (index: number) => {
+  const handleAttachClick = () => fileInputRef.current?.click()
+  const removePendingAttachment = (index: number) =>
     setPendingAttachments((prev) => prev.filter((_, i) => i !== index))
-  }
 
-  const handleAttachClick = () => {
-    fileInputRef.current?.click()
+  // Notes
+  const addNote = async () => {
+    if (!selectedTicketId || !noteContent.trim()) return
+    setAddingNote(true)
+    try {
+      await adminFetch(`/admin/tickets/${selectedTicketId}/notes`, {
+        method: 'POST',
+        body: { content: noteContent.trim() },
+      })
+      setNoteContent('')
+      toast.success('Note added')
+      await fetchDetails(selectedTicketId)
+    } catch (error) {
+      toast.error('Failed to add note', {
+        description: error instanceof Error ? error.message : 'Unknown error',
+      })
+    } finally {
+      setAddingNote(false)
+    }
   }
 
   useEffect(() => {
     fetchTickets()
-  }, [])
+  }, [fetchTickets])
 
   useEffect(() => {
     if (selectedTicketId) {
       fetchDetails(selectedTicketId)
+      setReply('')
+      setNoteContent('')
     } else {
       setDetails(null)
     }
-  }, [selectedTicketId])
+  }, [selectedTicketId, fetchDetails])
+
+  useEffect(() => {
+    if (selectedTicket?.customer_id) {
+      fetchCustomer(selectedTicket.customer_id)
+      setAssignedToInput(selectedTicket.assigned_to ?? '')
+    }
+  }, [selectedTicket?.customer_id, selectedTicket?.assigned_to, fetchCustomer])
 
   return (
     <Container>
       <div className="mb-6 flex items-center justify-between">
         <div>
           <Heading>Support Tickets</Heading>
-          <Text className="text-ui-fg-subtle mt-1">Review customer conversations and manage support status.</Text>
+          <Text className="text-ui-fg-subtle mt-1">
+            {tickets.length} ticket{tickets.length !== 1 ? 's' : ''} total
+          </Text>
         </div>
-        <Button variant="secondary" onClick={fetchTickets} disabled={loadingTickets}>
-          Refresh
-        </Button>
+        <div className="flex items-center gap-4">
+          <Button variant="secondary" size="small" onClick={fetchTickets} disabled={loadingTickets}>
+            Refresh
+          </Button>
+        </div>
       </div>
 
-      <div className="grid grid-cols-[minmax(420px,1fr)_minmax(360px,0.9fr)] gap-4">
+      <div className="grid grid-cols-[minmax(360px,1fr)_minmax(400px,1fr)] gap-4">
+        {/* Ticket List */}
         <div className="rounded-lg border bg-ui-bg-base">
-          <div className="grid grid-cols-[1fr_180px_180px] gap-3 border-b p-4">
+          <div className="border-b p-4 space-y-3">
             <Input
-              placeholder="Search tickets"
+              placeholder="Search tickets..."
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
+              onChange={(e) => setSearch(e.target.value)}
             />
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <Select.Trigger>
-                <Select.Value placeholder="Status" />
-              </Select.Trigger>
-              <Select.Content>
-                <Select.Item value="all">All Statuses</Select.Item>
-                {STATUS_OPTIONS.map((status) => (
-                  <Select.Item key={status} value={status}>
-                    {formatLabel(status)}
-                  </Select.Item>
-                ))}
-              </Select.Content>
-            </Select>
-            <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-              <Select.Trigger>
-                <Select.Value placeholder="Category" />
-              </Select.Trigger>
-              <Select.Content>
-                <Select.Item value="all">All Categories</Select.Item>
-                {CATEGORY_OPTIONS.map((category) => (
-                  <Select.Item key={category} value={category}>
-                    {formatLabel(category)}
-                  </Select.Item>
-                ))}
-              </Select.Content>
-            </Select>
+            <div className="flex gap-2">
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <Select.Trigger>
+                  <Select.Value placeholder="Status" />
+                </Select.Trigger>
+                <Select.Content>
+                  <Select.Item value="all">All Statuses</Select.Item>
+                  {STATUS_OPTIONS.map((status) => (
+                    <Select.Item key={status} value={status}>
+                      {formatLabel(status)}
+                    </Select.Item>
+                  ))}
+                </Select.Content>
+              </Select>
+              <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                <Select.Trigger>
+                  <Select.Value placeholder="Category" />
+                </Select.Trigger>
+                <Select.Content>
+                  <Select.Item value="all">All Categories</Select.Item>
+                  {CATEGORY_OPTIONS.map((category) => (
+                    <Select.Item key={category} value={category}>
+                      {formatLabel(category)}
+                    </Select.Item>
+                  ))}
+                </Select.Content>
+              </Select>
+            </div>
           </div>
 
           {loadingTickets ? (
@@ -434,6 +460,7 @@ export default function SupportTicketsPage() {
           )}
         </div>
 
+        {/* Ticket Detail Panel */}
         <div className="rounded-lg border bg-ui-bg-base">
           {!selectedTicket ? (
             <div className="flex h-full min-h-96 items-center justify-center p-8 text-center">
@@ -451,31 +478,27 @@ export default function SupportTicketsPage() {
                       href={`/customers/${selectedTicket.customer_id}`}
                       className="mt-1 inline-block text-small text-ui-fg-subtle hover:text-ui-fg-base"
                     >
-                      Customer {selectedTicket.customer_id}
+                      {loadingCustomer ? (
+                        <span className="inline-flex items-center gap-1">
+                          <Spinner className="animate-spin" />
+                          Loading...
+                        </span>
+                      ) : customerName ? (
+                        `${customerName} · ${customerEmail}`
+                      ) : (
+                        selectedTicket.customer_id
+                      )}
                     </a>
-                    {selectedTicket.order_id ? (
-                      <a
-                        href={`/orders/${selectedTicket.order_id}`}
-                        className="inline-block text-small text-ui-fg-subtle hover:text-ui-fg-base"
-                      >
-                        Order {selectedTicket.order_id}
-                      </a>
-                    ) : null}
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="danger"
-                      size="small"
-                      onClick={deleteTicket}
-                      disabled={saving}
-                    >
-                      Delete
-                    </Button>
-                    {loadingDetails ? <Spinner className="animate-spin" /> : null}
+                  <div className="flex shrink-0 items-center gap-2">
+                    {selectedTicket.order_id && (
+                      <a href={`/orders/${selectedTicket.order_id}`}>
+                        <Badge size="small">Order #{selectedTicket.order_id.slice(-8)}</Badge>
+                      </a>
+                    )}
                   </div>
                 </div>
-
-                <div>
+                <div className="grid grid-cols-2 gap-3">
                   <div>
                     <Label>Status</Label>
                     <Select
@@ -495,9 +518,33 @@ export default function SupportTicketsPage() {
                       </Select.Content>
                     </Select>
                   </div>
+                  <div>
+                    <Label>Assigned To</Label>
+                    <Input
+                      value={assignedToInput}
+                      onChange={(event) => setAssignedToInput(event.target.value)}
+                      onBlur={() => {
+                        const value = assignedToInput.trim()
+                        if (value !== (selectedTicket.assigned_to ?? '')) {
+                          updateTicket({ assigned_to: value || null })
+                        }
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          const value = assignedToInput.trim()
+                          if (value !== (selectedTicket.assigned_to ?? '')) {
+                            updateTicket({ assigned_to: value || null })
+                          }
+                        }
+                      }}
+                      placeholder="Admin user ID"
+                      disabled={saving}
+                    />
+                  </div>
                 </div>
               </div>
 
+              {/* Messages */}
               <div className="flex-1 space-y-3 overflow-y-auto p-4">
                 {details?.messages.length ? (
                   details.messages.map((message) => (
@@ -520,15 +567,13 @@ export default function SupportTicketsPage() {
                       </Text>
                       {(() => {
                         const messageAttachments = normalizeAttachments(message.attachments)
-                        if (messageAttachments.length === 0) {
-                          return null
-                        }
+                        if (messageAttachments.length === 0) return null
                         return (
                           <div className="mt-2 flex flex-wrap gap-2">
                             {messageAttachments.map((attachment, index) => (
                               <a
                                 key={index}
-                                href={attachment.url}
+                                href={getAttachmentUrl(attachment)}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="text-small text-ui-fg-interactive hover:underline"
@@ -541,11 +586,60 @@ export default function SupportTicketsPage() {
                       })()}
                     </div>
                   ))
+                ) : loadingDetails ? (
+                  <div className="flex justify-center py-8">
+                    <Spinner className="animate-spin" />
+                  </div>
                 ) : (
                   <Text className="text-ui-fg-subtle">No messages yet.</Text>
                 )}
               </div>
 
+              {/* Notes */}
+              {details && (
+                <div className="border-t p-4">
+                  <Heading level="h3" className="mb-3">Notes</Heading>
+                  {details.notes.length > 0 && (
+                    <div className="mb-4 space-y-2 max-h-40 overflow-y-auto">
+                      {details.notes.map((note) => (
+                        <div key={note.id} className="rounded border bg-ui-bg-subtle p-2">
+                          <div className="flex items-center justify-between gap-2 mb-1">
+                            <Text size="xsmall" className="text-ui-fg-muted">
+                              {formatDate(note.created_at)}
+                              {note.author_id && ` · ${note.author_id}`}
+                            </Text>
+                          </div>
+                          <Text size="small" className="whitespace-pre-wrap">{note.content}</Text>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="Add an internal note..."
+                      value={noteContent}
+                      onChange={(e) => setNoteContent(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault()
+                          addNote()
+                        }
+                      }}
+                    />
+                    <Button
+                      variant="secondary"
+                      size="small"
+                      onClick={addNote}
+                      disabled={!noteContent.trim() || addingNote}
+                      isLoading={addingNote}
+                    >
+                      Add
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* Reply */}
               <div className="border-t p-4">
                 <Label htmlFor="support-ticket-reply">Reply</Label>
                 <Textarea
@@ -569,6 +663,7 @@ export default function SupportTicketsPage() {
                           type="button"
                           onClick={() => removePendingAttachment(index)}
                           className="ml-1 cursor-pointer text-ui-fg-subtle hover:text-ui-fg-base"
+                          aria-label={`Remove ${attachment.filename}`}
                         >
                           ×
                         </button>

@@ -9,6 +9,7 @@ export const Ticket = model
     category: model.text(),
     status: model.text().default('open'),
     customer_id: model.text(),
+    assigned_to: model.text().nullable(),
     order_id: model.text().nullable(),
     closed_at: model.dateTime().nullable(),
     metadata: model.json().nullable(),
@@ -22,6 +23,9 @@ export const Ticket = model
   .indexes([
     {
       on: ['customer_id', 'status'],
+    },
+    {
+      on: ['assigned_to'],
     },
     {
       on: ['order_id'],

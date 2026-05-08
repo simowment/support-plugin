@@ -11,3 +11,7 @@ export const TicketEvent = model.define('ticket_event', {
   performed_by_type: model.text().nullable(),
   performed_by_id: model.text().nullable(),
 })
+  .indexes([
+    { on: ['ticket_id'] },
+    { on: ['event_type'] },
+  ])

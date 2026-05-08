@@ -1,69 +1,45 @@
 import { MedusaRequest, MedusaResponse } from '@medusajs/framework/http'
-import SupportTicketModuleService from '../../../../modules/support-ticket/service'
-import { SUPPORT_TICKET_MODULE, TicketStatus } from '../../../../modules/support-ticket'
+import { resolveTicketService, requireAdminAuth, validateEnum, VALID_STATUSES, ticketNotFound } from '../../../shared/helpers'
+import { TicketStatus } from '../../../../modules/support-ticket'
 
 type UpdateTicketBody = {
   status?: string
+  assigned_to?: string | null
 }
 
-const VALID_STATUSES = new Set<string>(Object.values(TicketStatus))
-
 export async function GET(req: MedusaRequest, res: MedusaResponse) {
-  const supportTicketService: SupportTicketModuleService =
-    req.scope.resolve(SUPPORT_TICKET_MODULE)
-
-  const result = await supportTicketService.getTicketWithMessages(req.params.id)
-  if (!result) {
-    return res.status(404).json({ success: false, error: 'Ticket not found' })
-  }
-
+  const service = resolveTicketService(req)
+  const result = await service.getTicketWithMessages(req.params.id)
+  if (!result) return ticketNotFound(res)
   return res.json({ success: true, ...result })
 }
 
-export async function PATCH(
-  req: MedusaRequest<UpdateTicketBody>,
-  res: MedusaResponse,
-) {
-  const { status } = req.body
+export async function PATCH(req: MedusaRequest<UpdateTicketBody>, res: MedusaResponse) {
+  const { status, assigned_to } = req.body
 
-  if (status && !VALID_STATUSES.has(status)) {
-    return res.status(400).json({
-      success: false,
-      error: `Invalid status. Valid values: ${Object.values(TicketStatus).join(', ')}`,
-    })
-  }
+  const statusError = validateEnum(status, VALID_STATUSES, 'status')
+  if (statusError) return res.status(400).json({ success: false, error: statusError })
 
+  const service = resolveTicketService(req)
+  const adminId = requireAdminAuth(req, res)
+  if (!adminId) return
 
-  const supportTicketService: SupportTicketModuleService =
-    req.scope.resolve(SUPPORT_TICKET_MODULE)
-
-  const ticket = await supportTicketService.updateTicket(
+  const ticket = await service.updateTicket(
     req.params.id,
-    {
-      status: status as TicketStatus | undefined,
-    },
+    { status: status as TicketStatus | undefined, assignedTo: assigned_to },
     'admin',
-    (req as any).auth_context?.actor_id,
+    adminId,
   )
-  if (!ticket) {
-    return res.status(404).json({ success: false, error: 'Ticket not found' })
-  }
-
+  if (!ticket) return ticketNotFound(res)
   return res.json({ success: true, ticket })
 }
 
 export async function DELETE(req: MedusaRequest, res: MedusaResponse) {
-  const supportTicketService: SupportTicketModuleService =
-    req.scope.resolve(SUPPORT_TICKET_MODULE)
+  const service = resolveTicketService(req)
+  const adminId = requireAdminAuth(req, res)
+  if (!adminId) return
 
-  const deleted = await supportTicketService.deleteTicket(
-    req.params.id,
-    'admin',
-    (req as any).auth_context?.actor_id,
-  )
-  if (!deleted) {
-    return res.status(404).json({ success: false, error: 'Ticket not found' })
-  }
-
+  const deleted = await service.deleteTicket(req.params.id, 'admin', adminId)
+  if (!deleted) return ticketNotFound(res)
   return res.json({ success: true, id: deleted.id, deleted: true })
 }
