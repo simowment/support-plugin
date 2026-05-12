@@ -1,6 +1,7 @@
 import { MedusaRequest, MedusaResponse } from '@medusajs/framework/http'
 import { MedusaError } from '@medusajs/framework/utils'
 import { uploadFilesWorkflow } from '@medusajs/medusa/core-flows'
+import { MAX_FILE_SIZE_BYTES, ALLOWED_MIME_TYPES } from './helpers'
 
 type AttachmentResult = {
   url: string
@@ -38,6 +39,24 @@ function getMimeType(file: Express.Multer.File) {
   return file.mimetype
 }
 
+function validateFile(file: Express.Multer.File, index: number) {
+  if (file.size > MAX_FILE_SIZE_BYTES) {
+    const maxMB = (MAX_FILE_SIZE_BYTES / (1024 * 1024)).toFixed(0)
+    throw new MedusaError(
+      MedusaError.Types.INVALID_DATA,
+      `File "${file.originalname}" exceeds the ${maxMB}MB size limit`,
+    )
+  }
+
+  const mimeType = getMimeType(file)
+  if (!ALLOWED_MIME_TYPES.has(mimeType)) {
+    throw new MedusaError(
+      MedusaError.Types.INVALID_DATA,
+      `File "${file.originalname}" has an unsupported type: ${mimeType}. Allowed: ${Array.from(ALLOWED_MIME_TYPES).join(', ')}`,
+    )
+  }
+}
+
 export async function handleFileUpload(
   req: MedusaRequest,
   res: MedusaResponse,
@@ -46,6 +65,10 @@ export async function handleFileUpload(
 
   if (!files?.length) {
     throw new MedusaError(MedusaError.Types.INVALID_DATA, 'No files were uploaded')
+  }
+
+  for (let i = 0; i < files.length; i++) {
+    validateFile(files[i], i)
   }
 
   const { result } = await uploadFilesWorkflow(req.scope).run({

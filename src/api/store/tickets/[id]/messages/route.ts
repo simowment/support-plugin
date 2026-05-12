@@ -1,6 +1,8 @@
 import { AuthenticatedMedusaRequest, MedusaResponse } from '@medusajs/framework/http'
-import { resolveTicketService, requireAuth, ticketNotFound, type MessageBody } from '../../../../shared/helpers'
+import { resolveTicketService, requireAuth, ticketNotFound, sanitize, sendError, type MessageBody } from '../../../../shared/helpers'
 import { SenderType } from '../../../../../modules/support-ticket'
+
+const MESSAGE_MAX_LENGTH = 10000
 
 export async function POST(req: AuthenticatedMedusaRequest<MessageBody>, res: MedusaResponse) {
   const customerId = requireAuth(req, res)
@@ -8,7 +10,12 @@ export async function POST(req: AuthenticatedMedusaRequest<MessageBody>, res: Me
 
   const { message, attachments } = req.body
   if (!message?.trim() && !attachments?.length) {
-    return res.status(400).json({ success: false, error: 'Message or attachments are required.' })
+    return sendError(res, 400, 'VALIDATION', 'Message or attachments are required.')
+  }
+
+  const cleanMessage = message ? sanitize(message) : ''
+  if (cleanMessage.length > MESSAGE_MAX_LENGTH) {
+    return sendError(res, 400, 'VALIDATION', `Message must be under ${MESSAGE_MAX_LENGTH} characters.`)
   }
 
   const service = resolveTicketService(req)
@@ -17,7 +24,7 @@ export async function POST(req: AuthenticatedMedusaRequest<MessageBody>, res: Me
 
   const msg = await service.addMessage({
     ticketId: req.params.id,
-    message: message?.trim() || '',
+    message: cleanMessage,
     senderType: SenderType.CUSTOMER,
     senderId: customerId,
     attachments,
