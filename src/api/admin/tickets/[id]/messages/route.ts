@@ -1,8 +1,6 @@
 import { MedusaRequest, MedusaResponse } from '@medusajs/framework/http'
-import { resolveTicketService, requireAdminAuth, ticketNotFound, sanitize, sendError, type MessageBody } from '../../../../shared/helpers'
+import { resolveTicketService, requireAdminAuth, ticketNotFound, sanitize, sendError, type MessageBody, MESSAGE_MAX_LENGTH } from '../../../../shared/helpers'
 import { SenderType } from '../../../../../modules/support-ticket'
-
-const MESSAGE_MAX_LENGTH = 10000
 
 export async function POST(req: MedusaRequest<MessageBody>, res: MedusaResponse) {
   const { message, attachments } = req.body

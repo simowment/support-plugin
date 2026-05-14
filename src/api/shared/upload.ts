@@ -1,7 +1,7 @@
 import { MedusaRequest, MedusaResponse } from '@medusajs/framework/http'
 import { MedusaError } from '@medusajs/framework/utils'
 import { uploadFilesWorkflow } from '@medusajs/medusa/core-flows'
-import { MAX_FILE_SIZE_BYTES, ALLOWED_MIME_TYPES } from './helpers'
+import { MAX_FILE_SIZE_BYTES, MAX_FILES_PER_MESSAGE, ALLOWED_MIME_TYPES } from './helpers'
 
 type AttachmentResult = {
   url: string
@@ -65,6 +65,13 @@ export async function handleFileUpload(
 
   if (!files?.length) {
     throw new MedusaError(MedusaError.Types.INVALID_DATA, 'No files were uploaded')
+  }
+
+  if (files.length > MAX_FILES_PER_MESSAGE) {
+    throw new MedusaError(
+      MedusaError.Types.INVALID_DATA,
+      `Maximum ${MAX_FILES_PER_MESSAGE} files allowed per message`,
+    )
   }
 
   for (let i = 0; i < files.length; i++) {

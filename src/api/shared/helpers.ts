@@ -11,13 +11,20 @@ export const DEFAULT_OFFSET = 0
 // Upload limits
 export const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024       // 10MB
 export const MAX_FILES_PER_MESSAGE = 5
+export const MESSAGE_MAX_LENGTH = 10000
 export const ALLOWED_MIME_TYPES = new Set([
   'image/png',
   'image/jpeg',
   'image/webp',
   'image/gif',
+  'image/svg+xml',
   'application/pdf',
   'text/plain',
+  'text/csv',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 ])
 
 export function resolveTicketService(req: MedusaRequest): SupportTicketModuleService {
@@ -64,11 +71,11 @@ export function validateEnum(value: string | undefined, validValues: Set<string>
  */
 export function sanitize(input: string): string {
   return input
-    .replace(/<[^>]*>/g, '')          // strip HTML tags
-    .replace(/&lt;/g, '<')             // decode harmless entities
+    .replace(/&lt;/g, '<')             // decode entities first
     .replace(/&gt;/g, '>')
     .replace(/&amp;/g, '&')
     .replace(/&quot;/g, '"')
+    .replace(/<[^>]*>/g, '')          // then strip HTML tags
     .trim()
 }
 

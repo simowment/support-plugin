@@ -154,14 +154,7 @@ export default class SupportTicketModuleService extends MedusaService({
 
     const isClosed = currentTicket.status === TicketStatus.CLOSED
 
-    // Reopen closed tickets before adding message
-    if (isClosed) {
-      await this.updateTickets([{ id: input.ticketId, status: TicketStatus.OPEN, closed_at: null }])
-      await this.createTicketEvents([
-        this.buildEvent(input.ticketId, TicketEventType.TICKET_REOPENED, { reason: 'message_received', sender_type: input.senderType }, input.senderType, input.senderId),
-      ])
-    }
-
+    // 1. Create message FIRST (critical data — must persist)
     const [message] = await this.createTicketMessages([
       {
         ticket: input.ticketId,
@@ -172,24 +165,54 @@ export default class SupportTicketModuleService extends MedusaService({
       },
     ])
 
-    await this.createTicketEvents([
-      this.buildEvent(input.ticketId, TicketEventType.MESSAGE_ADDED, { sender_type: input.senderType }, input.senderType, input.senderId),
-    ])
-
-    // Update status based on sender (skip for system messages)
-    if (input.senderType !== SenderTypeValues.SYSTEM) {
-      const effectiveStatus = isClosed ? TicketStatus.OPEN : currentTicket.status
-      if (input.senderType === SenderTypeValues.CUSTOMER && effectiveStatus !== TicketStatus.OPEN) {
-        await this.updateTickets([{ id: input.ticketId, status: TicketStatus.WAITING_ADMIN }])
-      } else if (input.senderType === SenderTypeValues.ADMIN) {
-        await this.updateTickets([{ id: input.ticketId, status: TicketStatus.WAITING_CUSTOMER }])
+    // 2. Reopen ticket if closed (non-critical — guarded)
+    if (isClosed) {
+      try {
+        await this.updateTickets([{ id: input.ticketId, status: TicketStatus.OPEN, closed_at: null }])
+      } catch {
+        // Non-critical: ticket stays closed, message already persisted
+      }
+      try {
+        await this.createTicketEvents([
+          this.buildEvent(input.ticketId, TicketEventType.TICKET_REOPENED, { reason: 'message_received', sender_type: input.senderType }, input.senderType, input.senderId),
+        ])
+      } catch {
+        // Non-critical: reopen event missing, audit trail gap is acceptable
       }
     }
 
-    await this.eventBusService_?.emit({
-      name: TicketEventName.MESSAGE_ADDED,
-      data: { ticket_id: input.ticketId, message_id: (message as { id: string }).id, sender_type: input.senderType, sender_id: input.senderId ?? null, message: input.message },
-    })
+    // 3. Create message event (non-critical — guarded)
+    try {
+      await this.createTicketEvents([
+        this.buildEvent(input.ticketId, TicketEventType.MESSAGE_ADDED, { sender_type: input.senderType }, input.senderType, input.senderId),
+      ])
+    } catch {
+      // Non-critical: event missing, message already persisted
+    }
+
+    // 4. Update status (non-critical — guarded)
+    if (input.senderType !== SenderTypeValues.SYSTEM) {
+      const effectiveStatus = isClosed ? TicketStatus.OPEN : currentTicket.status
+      try {
+        if (input.senderType === SenderTypeValues.CUSTOMER && effectiveStatus !== TicketStatus.OPEN) {
+          await this.updateTickets([{ id: input.ticketId, status: TicketStatus.WAITING_ADMIN }])
+        } else if (input.senderType === SenderTypeValues.ADMIN) {
+          await this.updateTickets([{ id: input.ticketId, status: TicketStatus.WAITING_CUSTOMER }])
+        }
+      } catch {
+        // Non-critical: status update failed, ticket state is still valid
+      }
+    }
+
+    // 5. Emit event bus LAST (external side effect, after DB is consistent)
+    try {
+      await this.eventBusService_?.emit({
+        name: TicketEventName.MESSAGE_ADDED,
+        data: { ticket_id: input.ticketId, message_id: (message as { id: string }).id, sender_type: input.senderType, sender_id: input.senderId ?? null, message: input.message },
+      })
+    } catch {
+      // Event bus is non-critical for SSE delivery
+    }
 
     return message
   }
@@ -244,14 +267,9 @@ export default class SupportTicketModuleService extends MedusaService({
       return null
     }
 
-    // Create deletion event BEFORE deleting (so it persists)
-    await this.createTicketEvents([
-      this.buildEvent(ticketId, TicketEventType.TICKET_DELETED, {}, performedByType, performedById),
-    ])
-
     await this.deleteTicketMessages({ ticket: ticketId })
-    await this.deleteTicketEvents({ ticket: ticketId })
     await this.deleteTicketNotes({ ticket_id: ticketId })
+    await this.deleteTicketEvents({ ticket: ticketId })
     await this.deleteTickets({ id: ticketId })
 
     await this.eventBusService_?.emit({
@@ -281,11 +299,76 @@ export default class SupportTicketModuleService extends MedusaService({
     const ticket = await this.getTicketById(ticketId)
     if (!ticket) return null
 
-    const messages = await this.listTicketMessages({ ticket: ticketId }, { order: { created_at: 'ASC' } })
-    const events = await this.listTicketEvents({ ticket: ticketId }, { order: { created_at: 'ASC' } })
-    const notes = await this.listTicketNotes({ ticket_id: ticketId }, { order: { created_at: 'ASC' } })
+    const [messages, events, notes] = await Promise.all([
+      this.listTicketMessages({ ticket: ticketId }, { order: { created_at: 'ASC' } }),
+      this.listTicketEvents({ ticket: ticketId }, { order: { created_at: 'ASC' } }),
+      this.listTicketNotes({ ticket_id: ticketId }, { order: { created_at: 'ASC' } }),
+    ])
 
     return { ticket, messages, events, notes }
+  }
+
+  // ── Ticket merging ────────────────────────────────────────────────
+
+  async mergeTickets(sourceTicketId: string, targetTicketId: string, performedByType?: string, performedById?: string) {
+    if (sourceTicketId === targetTicketId) {
+      throw new Error('Cannot merge a ticket with itself.')
+    }
+
+    const [source, target] = await Promise.all([
+      this.getTicketById(sourceTicketId),
+      this.getTicketById(targetTicketId),
+    ])
+
+    if (!source || !target) {
+      throw new Error(`Both tickets must exist. Got source=${!source}, target=${!target}`)
+    }
+
+    if (source.customer_id !== target.customer_id) {
+      throw new Error('Tickets can only be merged when they belong to the same customer.')
+    }
+
+    // Move messages from source to target
+    const messages = await this.listTicketMessages({ ticket: sourceTicketId }, { take: 1000 })
+    for (const msg of messages) {
+      await this.updateTicketMessages([{ id: (msg as { id: string }).id, ticket: targetTicketId }])
+    }
+
+    // Move notes from source to target
+    const notes = await this.listTicketNotes({ ticket_id: sourceTicketId }, { take: 1000 })
+    for (const note of notes) {
+      await this.updateTicketNotes([{ id: (note as { id: string }).id, ticket_id: targetTicketId }])
+    }
+
+    // Mark source closed and record merge in metadata
+    await this.updateTickets([{
+      id: sourceTicketId,
+      status: TicketStatus.CLOSED,
+      closed_at: new Date(),
+      metadata: { ...((source.metadata as Record<string, unknown>) ?? {}), merged_into: targetTicketId },
+    }])
+
+    // Update target subject if needed (prepend note)
+    await this.updateTickets([{ id: targetTicketId, metadata: { ...((target.metadata as Record<string, unknown>) ?? {}), merged_from: sourceTicketId } }])
+
+    const events: TicketEventData[] = [
+      this.buildEvent(targetTicketId, TicketEventType.TICKET_MERGED, {
+        source_ticket_id: sourceTicketId,
+        source_subject: source.subject,
+        messages_moved: messages.length,
+        notes_moved: notes.length,
+      }, performedByType, performedById),
+      this.buildEvent(sourceTicketId, TicketEventType.TICKET_MERGED, {
+        merged_into: targetTicketId,
+      }, performedByType, performedById),
+    ]
+
+    await this.emitAndPersistEvents(targetTicketId, events, TicketEventName.MERGED, {
+      source_ticket_id: sourceTicketId,
+      target_ticket_id: targetTicketId,
+    })
+
+    return { source_ticket_id: sourceTicketId, target_ticket_id: targetTicketId }
   }
 
   // ── Notes ────────────────────────────────────────────────────────
@@ -299,5 +382,47 @@ export default class SupportTicketModuleService extends MedusaService({
       },
     ])
     return note
+  }
+
+  // ── Customer reply notifications ────────────────────────────────
+
+  /**
+   * Count tickets where the most recent message is from a customer.
+   * These represent tickets needing admin attention.
+   */
+  async getUnreadCustomerReplyCount(): Promise<number> {
+    // All non-closed tickets are candidates; we need the ones where
+    // the latest message is from a customer. We do this by checking
+    // the last event on each ticket.
+    const openTickets = await this.listTickets({
+      status: { $ne: TicketStatus.CLOSED },
+    }, { take: 1000 })
+
+    let count = 0
+    for (const ticket of openTickets) {
+      const lastEvent = await this.listTicketEvents(
+        { ticket: (ticket as { id: string }).id },
+        { order: { created_at: 'DESC' }, take: 1 },
+      )
+      if (lastEvent.length > 0) {
+        const last = lastEvent[0] as { event_type: string; performed_by_type: string | null }
+        // Count if last meaningful event was a customer message
+        if (last.event_type === TicketEventType.MESSAGE_ADDED && last.performed_by_type === SenderTypeValues.CUSTOMER) {
+          count++
+        }
+      }
+    }
+    return count
+  }
+
+  /**
+   * List tickets that have waiting customer replies (latest message from customer).
+   */
+  async listTicketsWithCustomerReplies(pagination?: PaginationParams) {
+    const allOpen = await this.listTickets(
+      { status: { $ne: TicketStatus.CLOSED } },
+      { order: { updated_at: 'DESC' }, take: pagination?.take ?? 50, skip: pagination?.skip ?? 0 },
+    )
+    return allOpen
   }
 }

@@ -3,6 +3,7 @@ import { ChatBubbleLeftRight, Spinner } from '@medusajs/icons'
 import {
   Badge,
   Button,
+  Checkbox,
   Container,
   Heading,
   Input,
@@ -27,6 +28,7 @@ type Ticket = {
   closed_at: string | null
   created_at: string
   updated_at: string
+  metadata: Record<string, unknown> | null
 }
 
 type TicketMessage = {
@@ -58,6 +60,7 @@ type TicketEvent = {
   id: string
   event_type: string
   data: Record<string, unknown> | null
+  performed_by_type: string | null
   created_at: string
 }
 
@@ -84,6 +87,21 @@ const CATEGORY_OPTIONS = [
   'product_inquiry',
   'payment_issue',
   'general',
+]
+
+const CANNED_RESPONSES = [
+  {
+    label: 'Order status',
+    value: 'Thanks for reaching out. We are checking the latest status of your order and will update you shortly.',
+  },
+  {
+    label: 'Return instructions',
+    value: 'We can help with your return. Please confirm the item condition and whether the original packaging is available.',
+  },
+  {
+    label: 'Refund processing',
+    value: 'Your refund request is being reviewed. Once approved, refunds usually appear on the original payment method within a few business days.',
+  },
 ]
 
 const formatLabel = (value: string) =>
@@ -155,9 +173,20 @@ export default function SupportTicketsPage() {
   const [customerEmail, setCustomerEmail] = useState<string | null>(null)
   const [assignedToInput, setAssignedToInput] = useState('')
   const [loadingCustomer, setLoadingCustomer] = useState(false)
+  const [customerTickets, setCustomerTickets] = useState<Ticket[]>([])
+  const [loadingCustomerTickets, setLoadingCustomerTickets] = useState(false)
+  const [selectedTicketIds, setSelectedTicketIds] = useState<Set<string>>(new Set())
+  const [bulkSaving, setBulkSaving] = useState(false)
+  const [bulkAssignedTo, setBulkAssignedTo] = useState('')
   // Notes
   const [noteContent, setNoteContent] = useState('')
   const [addingNote, setAddingNote] = useState(false)
+  // Notifications / customer replies
+  const [recentTicketCount, setRecentTicketCount] = useState(0)
+  const [loadingNotifications, setLoadingNotifications] = useState(false)
+  // Merge
+  const [showMergeModal, setShowMergeModal] = useState(false)
+  const [mergeSourceId, setMergeSourceId] = useState('')
 
   const selectedTicket = details?.ticket ?? tickets.find((ticket) => ticket.id === selectedTicketId)
 
@@ -217,6 +246,7 @@ export default function SupportTicketsPage() {
 
   const fetchCustomer = useCallback(async (customerId: string) => {
     setLoadingCustomer(true)
+    const requestedId = customerId
     try {
       const data = await adminFetch<{ customer: { first_name?: string; last_name?: string; email?: string } }>(
         `/admin/customers/${customerId}`
@@ -224,14 +254,47 @@ export default function SupportTicketsPage() {
       const customer = data.customer
       if (customer) {
         const name = [customer.first_name, customer.last_name].filter(Boolean).join(' ') || customerId
-        setCustomerName(name)
-        setCustomerEmail(customer.email ?? null)
+        if (selectedTicket?.customer_id === requestedId) {
+          setCustomerName(name)
+          setCustomerEmail(customer.email ?? null)
+        }
       }
-    } catch {
+    } catch (e) {
+      console.warn('Failed to fetch customer details:', e)
       setCustomerName(null)
       setCustomerEmail(null)
     } finally {
       setLoadingCustomer(false)
+    }
+  }, [selectedTicket?.customer_id])
+
+  const fetchCustomerTickets = useCallback(async (customerId: string) => {
+    setLoadingCustomerTickets(true)
+    try {
+      const data = await adminFetch<{ tickets: Ticket[] }>(
+        `/admin/tickets?customer_id=${encodeURIComponent(customerId)}&limit=10`,
+      )
+      setCustomerTickets(data.tickets ?? [])
+    } catch (error) {
+      toast.error('Failed to load customer history', {
+        description: error instanceof Error ? error.message : 'Unknown error',
+      })
+      setCustomerTickets([])
+    } finally {
+      setLoadingCustomerTickets(false)
+    }
+  }, [])
+
+  const fetchNotifications = useCallback(async () => {
+    setLoadingNotifications(true)
+    try {
+      const data = await adminFetch<{ recent_ticket_count: number }>('/admin/tickets/notifications')
+      setRecentTicketCount(data.recent_ticket_count ?? 0)
+    } catch {
+      // Non-critical: notification count failure should not interrupt workflow
+      setRecentTicketCount(0)
+    } finally {
+      setLoadingNotifications(false)
     }
   }, [])
 
@@ -239,12 +302,12 @@ export default function SupportTicketsPage() {
     if (!selectedTicketId) return
     setSaving(true)
     try {
-      await adminFetch<{ ticket: Ticket }>(`/admin/tickets/${selectedTicketId}`, {
+      const updated = await adminFetch<{ ticket: Ticket }>(`/admin/tickets/${selectedTicketId}`, {
         method: 'PATCH',
         body: updates,
       })
-      await fetchDetails(selectedTicketId)
-      await fetchTickets()
+      setTickets(prev => prev.map(t => t.id === selectedTicketId ? { ...t, ...updated.ticket } : t))
+      setDetails(prev => prev ? { ...prev, ticket: { ...prev.ticket, ...updated.ticket } } : prev)
       if (updates.status) {
         toast.success(`Status updated to ${formatLabel(updates.status)}`)
       }
@@ -255,6 +318,54 @@ export default function SupportTicketsPage() {
     } finally {
       setSaving(false)
     }
+  }
+
+  const bulkUpdateTickets = async (updates: { status?: string; assigned_to?: string | null }) => {
+    const ticketIds = Array.from(selectedTicketIds)
+    if (ticketIds.length === 0) return
+
+    setBulkSaving(true)
+    try {
+      const data = await adminFetch<{ tickets: Ticket[] }>('/admin/tickets/bulk', {
+        method: 'POST',
+        body: {
+          ticket_ids: ticketIds,
+          ...updates,
+        },
+      })
+
+      setTickets((current) =>
+        current.map((ticket) => {
+          const updated = data.tickets.find((item) => item.id === ticket.id)
+          return updated ? { ...ticket, ...updated } : ticket
+        }),
+      )
+      setDetails((current) => {
+        if (!current) return current
+        const updated = data.tickets.find((ticket) => ticket.id === current.ticket.id)
+        return updated ? { ...current, ticket: { ...current.ticket, ...updated } } : current
+      })
+      setSelectedTicketIds(new Set())
+      toast.success('Tickets updated')
+    } catch (error) {
+      toast.error('Failed to update tickets', {
+        description: error instanceof Error ? error.message : 'Unknown error',
+      })
+    } finally {
+      setBulkSaving(false)
+    }
+  }
+
+  const toggleTicketSelection = (ticketId: string, checked: boolean) => {
+    setSelectedTicketIds((current) => {
+      const next = new Set(current)
+      if (checked) {
+        next.add(ticketId)
+      } else {
+        next.delete(ticketId)
+      }
+      return next
+    })
   }
 
   const sendReply = async () => {
@@ -312,6 +423,31 @@ export default function SupportTicketsPage() {
   const removePendingAttachment = (index: number) =>
     setPendingAttachments((prev) => prev.filter((_, i) => i !== index))
 
+  // Merge ticket
+  const mergeTicket = async (sourceTicketId: string) => {
+    if (!selectedTicketId) return
+    if (sourceTicketId === selectedTicketId) {
+      toast.error('Cannot merge a ticket with itself.')
+      return
+    }
+    setSaving(true)
+    try {
+      await adminFetch(`/admin/tickets/${selectedTicketId}/merge`, {
+        method: 'POST',
+        body: { source_ticket_id: sourceTicketId },
+      })
+      toast.success('Ticket merged')
+      await fetchDetails(selectedTicketId)
+      await fetchTickets()
+    } catch (error) {
+      toast.error('Failed to merge ticket', {
+        description: error instanceof Error ? error.message : 'Unknown error',
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
   // Notes
   const addNote = async () => {
     if (!selectedTicketId || !noteContent.trim()) return
@@ -335,13 +471,21 @@ export default function SupportTicketsPage() {
 
   useEffect(() => {
     fetchTickets()
-  }, [fetchTickets])
+    fetchNotifications()
+    const interval = setInterval(() => {
+      fetchTickets()
+      fetchNotifications()
+    }, 15_000)
+    return () => clearInterval(interval)
+  }, [fetchTickets, fetchNotifications])
 
   useEffect(() => {
     if (selectedTicketId) {
       fetchDetails(selectedTicketId)
       setReply('')
       setNoteContent('')
+      const interval = setInterval(() => fetchDetails(selectedTicketId), 5_000)
+      return () => clearInterval(interval)
     } else {
       setDetails(null)
     }
@@ -350,9 +494,10 @@ export default function SupportTicketsPage() {
   useEffect(() => {
     if (selectedTicket?.customer_id) {
       fetchCustomer(selectedTicket.customer_id)
+      fetchCustomerTickets(selectedTicket.customer_id)
       setAssignedToInput(selectedTicket.assigned_to ?? '')
     }
-  }, [selectedTicket?.customer_id, selectedTicket?.assigned_to, fetchCustomer])
+  }, [selectedTicket?.customer_id, selectedTicket?.assigned_to, fetchCustomer, fetchCustomerTickets])
 
   return (
     <Container>
@@ -364,6 +509,11 @@ export default function SupportTicketsPage() {
           </Text>
         </div>
         <div className="flex items-center gap-4">
+          {!loadingNotifications && recentTicketCount > 0 && (
+            <Badge color="red" size="small">
+              {recentTicketCount} recent
+            </Badge>
+          )}
           <Button variant="secondary" size="small" onClick={fetchTickets} disabled={loadingTickets}>
             Refresh
           </Button>
@@ -407,6 +557,49 @@ export default function SupportTicketsPage() {
                 </Select.Content>
               </Select>
             </div>
+            {selectedTicketIds.size > 0 && (
+              <div className="flex flex-wrap items-center gap-2 rounded border bg-ui-bg-subtle p-3">
+                <Text size="small" weight="plus">
+                  {selectedTicketIds.size} selected
+                </Text>
+                <Select
+                  onValueChange={(status) => bulkUpdateTickets({ status })}
+                  disabled={bulkSaving}
+                >
+                  <Select.Trigger className="w-40">
+                    <Select.Value placeholder="Set status" />
+                  </Select.Trigger>
+                  <Select.Content>
+                    {STATUS_OPTIONS.map((status) => (
+                      <Select.Item key={status} value={status}>{formatLabel(status)}</Select.Item>
+                    ))}
+                  </Select.Content>
+                </Select>
+                <Input
+                  className="w-48"
+                  value={bulkAssignedTo}
+                  onChange={(event) => setBulkAssignedTo(event.target.value)}
+                  placeholder="Assign admin ID"
+                  disabled={bulkSaving}
+                />
+                <Button
+                  size="small"
+                  variant="secondary"
+                  onClick={() => bulkUpdateTickets({ assigned_to: bulkAssignedTo.trim() || null })}
+                  isLoading={bulkSaving}
+                >
+                  Assign
+                </Button>
+                <Button
+                  size="small"
+                  variant="transparent"
+                  onClick={() => setSelectedTicketIds(new Set())}
+                  disabled={bulkSaving}
+                >
+                  Clear
+                </Button>
+              </div>
+            )}
           </div>
 
           {loadingTickets ? (
@@ -421,6 +614,24 @@ export default function SupportTicketsPage() {
             <Table>
               <Table.Header>
                 <Table.Row>
+                  <Table.HeaderCell className="w-10">
+                    <Checkbox
+                      checked={filteredTickets.length > 0 && filteredTickets.every((ticket) => selectedTicketIds.has(ticket.id))}
+                      onCheckedChange={(checked) => {
+                        setSelectedTicketIds((current) => {
+                          const next = new Set(current)
+                          for (const ticket of filteredTickets) {
+                            if (checked) {
+                              next.add(ticket.id)
+                            } else {
+                              next.delete(ticket.id)
+                            }
+                          }
+                          return next
+                        })
+                      }}
+                    />
+                  </Table.HeaderCell>
                   <Table.HeaderCell>Ticket</Table.HeaderCell>
                   <Table.HeaderCell>Status</Table.HeaderCell>
                   <Table.HeaderCell>Updated</Table.HeaderCell>
@@ -433,6 +644,12 @@ export default function SupportTicketsPage() {
                     onClick={() => setSelectedTicketId(ticket.id)}
                     className={`cursor-pointer ${ticket.id === selectedTicketId ? 'bg-ui-bg-subtle' : ''}`}
                   >
+                    <Table.Cell onClick={(event) => event.stopPropagation()}>
+                      <Checkbox
+                        checked={selectedTicketIds.has(ticket.id)}
+                        onCheckedChange={(checked) => toggleTicketSelection(ticket.id, checked === true)}
+                      />
+                    </Table.Cell>
                     <Table.Cell>
                       <div className="max-w-sm">
                         <Text size="small" weight="plus" className="truncate">
@@ -475,8 +692,10 @@ export default function SupportTicketsPage() {
                       {selectedTicket.subject}
                     </Heading>
                     <a
-                      href={`/customers/${selectedTicket.customer_id}`}
+                      href={loadingCustomer ? '#' : `/customers/${selectedTicket.customer_id}`}
+                      onClick={loadingCustomer ? (e) => e.preventDefault() : undefined}
                       className="mt-1 inline-block text-small text-ui-fg-subtle hover:text-ui-fg-base"
+                      title={loadingCustomer ? 'Loading customer...' : `Customer: ${selectedTicket.customer_id}`}
                     >
                       {loadingCustomer ? (
                         <span className="inline-flex items-center gap-1">
@@ -486,16 +705,25 @@ export default function SupportTicketsPage() {
                       ) : customerName ? (
                         `${customerName} · ${customerEmail}`
                       ) : (
-                        selectedTicket.customer_id
+                        `${selectedTicket.customer_id} (unavailable)`
                       )}
                     </a>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
-                    {selectedTicket.order_id && (
+                    {selectedTicket.order_id ? (
                       <a href={`/orders/${selectedTicket.order_id}`}>
                         <Badge size="small">Order #{selectedTicket.order_id.slice(-8)}</Badge>
                       </a>
+                    ) : (
+                      <Badge size="small" className="text-ui-fg-subtle">No order</Badge>
                     )}
+                    <Button
+                      size="small"
+                      variant="secondary"
+                      onClick={() => setShowMergeModal(true)}
+                    >
+                      Merge
+                    </Button>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
@@ -542,6 +770,36 @@ export default function SupportTicketsPage() {
                     />
                   </div>
                 </div>
+              </div>
+
+              <div className="border-b p-4">
+                <Text size="small" leading="compact" weight="plus">Customer History</Text>
+                {loadingCustomerTickets ? (
+                  <div className="mt-2 flex items-center gap-2">
+                    <Spinner className="animate-spin" />
+                    <Text size="small" className="text-ui-fg-subtle">Loading previous tickets...</Text>
+                  </div>
+                ) : customerTickets.filter((ticket) => ticket.id !== selectedTicket.id).length === 0 ? (
+                  <Text size="small" className="mt-2 text-ui-fg-subtle">No previous tickets.</Text>
+                ) : (
+                  <div className="mt-2 space-y-2">
+                    {customerTickets
+                      .filter((ticket) => ticket.id !== selectedTicket.id)
+                      .map((ticket) => (
+                        <button
+                          key={ticket.id}
+                          type="button"
+                          onClick={() => setSelectedTicketId(ticket.id)}
+                          className="block w-full rounded border p-2 text-left hover:bg-ui-bg-subtle"
+                        >
+                          <Text size="small" weight="plus" className="truncate">{ticket.subject}</Text>
+                          <Text size="xsmall" className="text-ui-fg-subtle">
+                            {formatLabel(ticket.status)} · {formatDate(ticket.created_at)}
+                          </Text>
+                        </button>
+                      ))}
+                  </div>
+                )}
               </div>
 
               {/* Messages */}
@@ -642,6 +900,28 @@ export default function SupportTicketsPage() {
               {/* Reply */}
               <div className="border-t p-4">
                 <Label htmlFor="support-ticket-reply">Reply</Label>
+                <div className="mb-2">
+                  <Select
+                    onValueChange={(label) => {
+                      const cannedResponse = CANNED_RESPONSES.find((item) => item.label === label)
+                      if (!cannedResponse) return
+                      setReply((current) => current.trim()
+                        ? `${current.trim()}\n\n${cannedResponse.value}`
+                        : cannedResponse.value)
+                    }}
+                  >
+                    <Select.Trigger>
+                      <Select.Value placeholder="Insert canned response" />
+                    </Select.Trigger>
+                    <Select.Content>
+                      {CANNED_RESPONSES.map((response) => (
+                        <Select.Item key={response.label} value={response.label}>
+                          {response.label}
+                        </Select.Item>
+                      ))}
+                    </Select.Content>
+                  </Select>
+                </div>
                 <Textarea
                   id="support-ticket-reply"
                   rows={4}
@@ -698,6 +978,44 @@ export default function SupportTicketsPage() {
           )}
         </div>
       </div>
+
+      {/* Merge modal */}
+      {showMergeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="w-full max-w-md rounded-lg border bg-ui-bg-base p-6 shadow-lg">
+            <Heading level="h2" className="mb-4">Merge Ticket</Heading>
+            <Text size="small" className="mb-4 text-ui-fg-subtle">
+              This ticket will become the target. Enter the ID of the source ticket to merge into this one.
+              Both tickets must belong to the same customer.
+            </Text>
+            <div className="mb-4 space-y-2">
+              <Label>Source Ticket ID</Label>
+              <Input
+                value={mergeSourceId}
+                onChange={(e) => setMergeSourceId(e.target.value)}
+                placeholder="ticket_..."
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => { setShowMergeModal(false); setMergeSourceId('') }}>
+                Cancel
+              </Button>
+              <Button
+                onClick={async () => {
+                  if (!mergeSourceId.trim()) return
+                  await mergeTicket(mergeSourceId.trim())
+                  setShowMergeModal(false)
+                  setMergeSourceId('')
+                }}
+                disabled={!mergeSourceId.trim() || saving}
+                isLoading={saving}
+              >
+                Merge
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </Container>
   )
 }

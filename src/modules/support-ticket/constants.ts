@@ -39,6 +39,7 @@ export const TicketEventType = {
   TICKET_CLOSED: 'ticket_closed',
   TICKET_REOPENED: 'ticket_reopened',
   TICKET_DELETED: 'ticket_deleted',
+  TICKET_MERGED: 'ticket_merged',
 } as const
 
 export type TicketEventType = (typeof TicketEventType)[keyof typeof TicketEventType]
@@ -49,6 +50,8 @@ export const TicketEventName = {
   UPDATED: 'support_ticket.updated',
   CLOSED: 'support_ticket.closed',
   DELETED: 'support_ticket.deleted',
+  MERGED: 'support_ticket.merged',
+  CUSTOMER_REPLY: 'support_ticket.customer_reply',
 } as const
 
 export type TicketEventName = (typeof TicketEventName)[keyof typeof TicketEventName]

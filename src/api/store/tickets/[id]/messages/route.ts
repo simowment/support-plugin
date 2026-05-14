@@ -1,8 +1,6 @@
 import { AuthenticatedMedusaRequest, MedusaResponse } from '@medusajs/framework/http'
-import { resolveTicketService, requireAuth, ticketNotFound, sanitize, sendError, type MessageBody } from '../../../../shared/helpers'
+import { resolveTicketService, requireAuth, ticketNotFound, sanitize, sendError, type MessageBody, MESSAGE_MAX_LENGTH } from '../../../../shared/helpers'
 import { SenderType } from '../../../../../modules/support-ticket'
-
-const MESSAGE_MAX_LENGTH = 10000
 
 export async function POST(req: AuthenticatedMedusaRequest<MessageBody>, res: MedusaResponse) {
   const customerId = requireAuth(req, res)

@@ -13,7 +13,8 @@ export async function adminFetch<T>(path: string, options: FetchOptions = {}): P
   const method = options.method ?? 'GET'
   const headers: Record<string, string> = {}
 
-  if (options.body) {
+  const isFormData = options.body instanceof FormData
+  if (options.body !== undefined && !isFormData) {
     headers['Content-Type'] = 'application/json'
   }
 
@@ -28,7 +29,11 @@ export async function adminFetch<T>(path: string, options: FetchOptions = {}): P
     method,
     credentials: 'include',
     headers: Object.keys(headers).length > 0 ? headers : undefined,
-    body: options.body ? JSON.stringify(options.body) : undefined,
+    body: isFormData
+      ? options.body
+      : options.body !== undefined
+        ? JSON.stringify(options.body)
+        : undefined,
   })
 
   if (!response.ok) {

@@ -1,5 +1,5 @@
 import { AuthenticatedMedusaRequest, MedusaResponse } from '@medusajs/framework/http'
-import { resolveTicketService, requireAuth, validateEnum, VALID_CATEGORIES, parsePagination, sanitize, sendError } from '../../shared/helpers'
+import { resolveTicketService, requireAuth, validateEnum, VALID_CATEGORIES, parsePagination, sanitize, sendError, MESSAGE_MAX_LENGTH } from '../../shared/helpers'
 import { TicketCategory } from '../../../modules/support-ticket'
 
 type CreateTicketBody = {
@@ -11,7 +11,6 @@ type CreateTicketBody = {
 }
 
 const SUBJECT_MAX_LENGTH = 200
-const MESSAGE_MAX_LENGTH = 10000
 
 export async function POST(req: AuthenticatedMedusaRequest<CreateTicketBody>, res: MedusaResponse) {
   const customerId = requireAuth(req, res)
