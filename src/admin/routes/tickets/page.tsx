@@ -1,15 +1,25 @@
 import { defineRouteConfig } from '@medusajs/admin-sdk'
-import { ChatBubbleLeftRight, Spinner } from '@medusajs/icons'
+import {
+  ChatBubbleLeftRight,
+  Clock,
+  PaperClip,
+  Sparkles,
+  Spinner,
+  Trash,
+  User,
+  XCircleSolid,
+  CheckCircleSolid,
+  ChevronRight,
+} from '@medusajs/icons'
 import {
   Badge,
   Button,
-  Checkbox,
   Container,
   Heading,
   Input,
   Label,
   Select,
-  Table,
+  Tabs,
   Text,
   Textarea,
   toast,
@@ -71,6 +81,19 @@ type TicketDetails = {
   notes: TicketNote[]
 }
 
+type AIAnalysis = {
+  id: string
+  ticket_id: string
+  category: string | null
+  category_confidence: number | null
+  suggested_priority: string | null
+  priority_confidence: number | null
+  auto_reply_eligible: boolean
+  auto_replied: boolean
+  suggested_response: string | null
+  response_confidence: number | null
+}
+
 const STATUS_OPTIONS = [
   'open',
   'in_progress',
@@ -90,18 +113,9 @@ const CATEGORY_OPTIONS = [
 ]
 
 const CANNED_RESPONSES = [
-  {
-    label: 'Order status',
-    value: 'Thanks for reaching out. We are checking the latest status of your order and will update you shortly.',
-  },
-  {
-    label: 'Return instructions',
-    value: 'We can help with your return. Please confirm the item condition and whether the original packaging is available.',
-  },
-  {
-    label: 'Refund processing',
-    value: 'Your refund request is being reviewed. Once approved, refunds usually appear on the original payment method within a few business days.',
-  },
+  { label: 'Order status', value: 'Thanks for reaching out. We are checking the latest status of your order and will update you shortly.' },
+  { label: 'Return instructions', value: 'We can help with your return. Please confirm the item condition and whether the original packaging is available.' },
+  { label: 'Refund processing', value: 'Your refund request is being reviewed. Once approved, refunds usually appear on the original payment method within a few business days.' },
 ]
 
 const formatLabel = (value: string) =>
@@ -111,38 +125,25 @@ const formatLabel = (value: string) =>
     .join(' ')
 
 const formatDate = (value?: string | null) => {
-  if (!value) {
-    return 'N/A'
-  }
+  if (!value) return 'N/A'
   return new Date(value).toLocaleString()
 }
 
 const statusColor = (status: string) => {
-  if (status === 'closed' || status === 'resolved') {
-    return 'green'
+  switch (status.toLowerCase()) {
+    case 'open': return 'blue'
+    case 'in_progress': return 'orange'
+    case 'resolved':
+    case 'closed': return 'green'
+    case 'waiting_admin': return 'red'
+    case 'waiting_customer': return 'grey'
+    default: return 'grey'
   }
-  if (status === 'waiting_admin') {
-    return 'red'
-  }
-  if (status === 'waiting_customer') {
-    return 'orange'
-  }
-  return 'blue'
-}
-
-const formatFileSize = (bytes: number) => {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 const normalizeAttachments = (attachments: unknown): Attachment[] => {
-  if (!attachments) {
-    return []
-  }
-  if (Array.isArray(attachments)) {
-    return attachments as Attachment[]
-  }
+  if (!attachments) return []
+  if (Array.isArray(attachments)) return attachments as Attachment[]
   if (typeof attachments === 'object' && attachments !== null && 'items' in attachments) {
     const obj = attachments as { items: Attachment[] }
     return Array.isArray(obj.items) ? obj.items : []
@@ -159,12 +160,14 @@ export default function SupportTicketsPage() {
   const [tickets, setTickets] = useState<Ticket[]>([])
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null)
   const [details, setDetails] = useState<TicketDetails | null>(null)
+  const [analysis, setAnalysis] = useState<AIAnalysis | null>(null)
   const [statusFilter, setStatusFilter] = useState('all')
   const [categoryFilter, setCategoryFilter] = useState('all')
   const [search, setSearch] = useState('')
   const [reply, setReply] = useState('')
   const [loadingTickets, setLoadingTickets] = useState(true)
   const [loadingDetails, setLoadingDetails] = useState(false)
+  const [loadingAnalysis, setLoadingAnalysis] = useState(false)
   const [saving, setSaving] = useState(false)
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([])
   const [uploadingFiles, setUploadingFiles] = useState(false)
@@ -172,37 +175,21 @@ export default function SupportTicketsPage() {
   const [customerName, setCustomerName] = useState<string | null>(null)
   const [customerEmail, setCustomerEmail] = useState<string | null>(null)
   const [assignedToInput, setAssignedToInput] = useState('')
-  const [loadingCustomer, setLoadingCustomer] = useState(false)
   const [customerTickets, setCustomerTickets] = useState<Ticket[]>([])
-  const [loadingCustomerTickets, setLoadingCustomerTickets] = useState(false)
-  const [selectedTicketIds, setSelectedTicketIds] = useState<Set<string>>(new Set())
-  const [bulkSaving, setBulkSaving] = useState(false)
-  const [bulkAssignedTo, setBulkAssignedTo] = useState('')
-  // Notes
   const [noteContent, setNoteContent] = useState('')
   const [addingNote, setAddingNote] = useState(false)
-  // Notifications / customer replies
-  const [recentTicketCount, setRecentTicketCount] = useState(0)
-  const [loadingNotifications, setLoadingNotifications] = useState(false)
-  // Merge
   const [showMergeModal, setShowMergeModal] = useState(false)
   const [mergeSourceId, setMergeSourceId] = useState('')
+  const [activeTab, setActiveTab] = useState<'conversation' | 'notes' | 'events'>('conversation')
 
   const selectedTicket = details?.ticket ?? tickets.find((ticket) => ticket.id === selectedTicketId)
 
   const filteredTickets = useMemo(() => {
     const term = search.trim().toLowerCase()
-
     return tickets.filter((ticket) => {
-      if (statusFilter !== 'all' && ticket.status !== statusFilter) {
-        return false
-      }
-      if (categoryFilter !== 'all' && ticket.category !== categoryFilter) {
-        return false
-      }
-      if (!term) {
-        return true
-      }
+      if (statusFilter !== 'all' && ticket.status !== statusFilter) return false
+      if (categoryFilter !== 'all' && ticket.category !== categoryFilter) return false
+      if (!term) return true
       return (
         ticket.subject.toLowerCase().includes(term) ||
         ticket.customer_id.toLowerCase().includes(term) ||
@@ -221,23 +208,31 @@ export default function SupportTicketsPage() {
         setSelectedTicketId(data.tickets[0].id)
       }
     } catch (error) {
-      toast.error('Failed to load tickets', {
-        description: error instanceof Error ? error.message : 'Unknown error',
-      })
+      toast.error('Failed to load tickets')
     } finally {
       setLoadingTickets(false)
     }
   }, [selectedTicketId])
+
+  const fetchAnalysis = useCallback(async (ticketId: string) => {
+    setLoadingAnalysis(true)
+    try {
+      const data = await adminFetch<{ analysis: AIAnalysis }>(`/admin/tickets/${ticketId}/ai`)
+      setAnalysis(data.analysis)
+    } catch {
+      setAnalysis(null)
+    } finally {
+      setLoadingAnalysis(false)
+    }
+  }, [])
 
   const fetchDetails = useCallback(async (ticketId: string) => {
     setLoadingDetails(true)
     try {
       const data = await adminFetch<TicketDetails>(`/admin/tickets/${ticketId}`)
       setDetails(data)
-    } catch (error) {
-      toast.error('Failed to load ticket', {
-        description: error instanceof Error ? error.message : 'Unknown error',
-      })
+    } catch {
+      toast.error('Failed to load ticket details')
       setDetails(null)
     } finally {
       setLoadingDetails(false)
@@ -245,60 +240,33 @@ export default function SupportTicketsPage() {
   }, [])
 
   const fetchCustomer = useCallback(async (customerId: string) => {
-    setLoadingCustomer(true)
-    const requestedId = customerId
     try {
       const data = await adminFetch<{ customer: { first_name?: string; last_name?: string; email?: string } }>(
         `/admin/customers/${customerId}`
       )
       const customer = data.customer
       if (customer) {
-        const name = [customer.first_name, customer.last_name].filter(Boolean).join(' ') || customerId
-        if (selectedTicket?.customer_id === requestedId) {
-          setCustomerName(name)
-          setCustomerEmail(customer.email ?? null)
-        }
+        setCustomerName([customer.first_name, customer.last_name].filter(Boolean).join(' ') || customerId)
+        setCustomerEmail(customer.email ?? null)
       }
-    } catch (e) {
-      console.warn('Failed to fetch customer details:', e)
+    } catch {
       setCustomerName(null)
       setCustomerEmail(null)
-    } finally {
-      setLoadingCustomer(false)
     }
-  }, [selectedTicket?.customer_id])
+  }, [])
 
   const fetchCustomerTickets = useCallback(async (customerId: string) => {
-    setLoadingCustomerTickets(true)
     try {
       const data = await adminFetch<{ tickets: Ticket[] }>(
         `/admin/tickets?customer_id=${encodeURIComponent(customerId)}&limit=10`,
       )
       setCustomerTickets(data.tickets ?? [])
-    } catch (error) {
-      toast.error('Failed to load customer history', {
-        description: error instanceof Error ? error.message : 'Unknown error',
-      })
-      setCustomerTickets([])
-    } finally {
-      setLoadingCustomerTickets(false)
-    }
-  }, [])
-
-  const fetchNotifications = useCallback(async () => {
-    setLoadingNotifications(true)
-    try {
-      const data = await adminFetch<{ recent_ticket_count: number }>('/admin/tickets/notifications')
-      setRecentTicketCount(data.recent_ticket_count ?? 0)
     } catch {
-      // Non-critical: notification count failure should not interrupt workflow
-      setRecentTicketCount(0)
-    } finally {
-      setLoadingNotifications(false)
+      setCustomerTickets([])
     }
   }, [])
 
-  const updateTicket = async (updates: { status?: string; assigned_to?: string | null }) => {
+  const updateTicket = useCallback(async (updates: { status?: string; assigned_to?: string | null }) => {
     if (!selectedTicketId) return
     setSaving(true)
     try {
@@ -308,65 +276,13 @@ export default function SupportTicketsPage() {
       })
       setTickets(prev => prev.map(t => t.id === selectedTicketId ? { ...t, ...updated.ticket } : t))
       setDetails(prev => prev ? { ...prev, ticket: { ...prev.ticket, ...updated.ticket } } : prev)
-      if (updates.status) {
-        toast.success(`Status updated to ${formatLabel(updates.status)}`)
-      }
-    } catch (error) {
-      toast.error('Failed to update ticket', {
-        description: error instanceof Error ? error.message : 'Unknown error',
-      })
+      toast.success('Ticket updated')
+    } catch {
+      toast.error('Failed to update ticket')
     } finally {
       setSaving(false)
     }
-  }
-
-  const bulkUpdateTickets = async (updates: { status?: string; assigned_to?: string | null }) => {
-    const ticketIds = Array.from(selectedTicketIds)
-    if (ticketIds.length === 0) return
-
-    setBulkSaving(true)
-    try {
-      const data = await adminFetch<{ tickets: Ticket[] }>('/admin/tickets/bulk', {
-        method: 'POST',
-        body: {
-          ticket_ids: ticketIds,
-          ...updates,
-        },
-      })
-
-      setTickets((current) =>
-        current.map((ticket) => {
-          const updated = data.tickets.find((item) => item.id === ticket.id)
-          return updated ? { ...ticket, ...updated } : ticket
-        }),
-      )
-      setDetails((current) => {
-        if (!current) return current
-        const updated = data.tickets.find((ticket) => ticket.id === current.ticket.id)
-        return updated ? { ...current, ticket: { ...current.ticket, ...updated } } : current
-      })
-      setSelectedTicketIds(new Set())
-      toast.success('Tickets updated')
-    } catch (error) {
-      toast.error('Failed to update tickets', {
-        description: error instanceof Error ? error.message : 'Unknown error',
-      })
-    } finally {
-      setBulkSaving(false)
-    }
-  }
-
-  const toggleTicketSelection = (ticketId: string, checked: boolean) => {
-    setSelectedTicketIds((current) => {
-      const next = new Set(current)
-      if (checked) {
-        next.add(ticketId)
-      } else {
-        next.delete(ticketId)
-      }
-      return next
-    })
-  }
+  }, [selectedTicketId]);
 
   const sendReply = async () => {
     if (!selectedTicketId) return
@@ -387,68 +303,13 @@ export default function SupportTicketsPage() {
       setPendingAttachments([])
       toast.success('Reply sent')
       await fetchDetails(selectedTicketId)
-    } catch (error) {
-      toast.error('Failed to send reply', {
-        description: error instanceof Error ? error.message : 'Unknown error',
-      })
+    } catch {
+      toast.error('Failed to send reply')
     } finally {
       setSaving(false)
     }
   }
 
-  const uploadFiles = async (files: FileList) => {
-    if (files.length === 0) return
-    setUploadingFiles(true)
-    try {
-      const formData = new FormData()
-      for (let i = 0; i < files.length; i++) {
-        formData.append('files', files[i])
-      }
-      const result = await adminFetch<{ attachments: Attachment[] }>('/admin/tickets/upload', {
-        method: 'POST',
-        body: formData,
-        // Let adminFetch use fetch with FormData (no Content-Type header)
-      } as any)
-      setPendingAttachments((prev) => [...prev, ...result.attachments])
-    } catch (error) {
-      toast.error('File upload failed', {
-        description: error instanceof Error ? error.message : 'Unknown error',
-      })
-    } finally {
-      setUploadingFiles(false)
-    }
-  }
-
-  const handleAttachClick = () => fileInputRef.current?.click()
-  const removePendingAttachment = (index: number) =>
-    setPendingAttachments((prev) => prev.filter((_, i) => i !== index))
-
-  // Merge ticket
-  const mergeTicket = async (sourceTicketId: string) => {
-    if (!selectedTicketId) return
-    if (sourceTicketId === selectedTicketId) {
-      toast.error('Cannot merge a ticket with itself.')
-      return
-    }
-    setSaving(true)
-    try {
-      await adminFetch(`/admin/tickets/${selectedTicketId}/merge`, {
-        method: 'POST',
-        body: { source_ticket_id: sourceTicketId },
-      })
-      toast.success('Ticket merged')
-      await fetchDetails(selectedTicketId)
-      await fetchTickets()
-    } catch (error) {
-      toast.error('Failed to merge ticket', {
-        description: error instanceof Error ? error.message : 'Unknown error',
-      })
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  // Notes
   const addNote = async () => {
     if (!selectedTicketId || !noteContent.trim()) return
     setAddingNote(true)
@@ -460,36 +321,62 @@ export default function SupportTicketsPage() {
       setNoteContent('')
       toast.success('Note added')
       await fetchDetails(selectedTicketId)
-    } catch (error) {
-      toast.error('Failed to add note', {
-        description: error instanceof Error ? error.message : 'Unknown error',
-      })
+    } catch {
+      toast.error('Failed to add note')
     } finally {
       setAddingNote(false)
     }
   }
 
+  const uploadFiles = async (files: FileList) => {
+    if (files.length === 0) return
+    setUploadingFiles(true)
+    try {
+      const formData = new FormData()
+      for (let i = 0; i < files.length; i++) formData.append('files', files[i])
+      const result = await adminFetch<{ attachments: Attachment[] }>('/admin/tickets/upload', {
+        method: 'POST',
+        body: formData,
+      } as any)
+      setPendingAttachments((prev) => [...prev, ...result.attachments])
+    } catch {
+      toast.error('File upload failed')
+    } finally {
+      setUploadingFiles(false)
+    }
+  }
+
+  const mergeTicket = async (sourceTicketId: string) => {
+    if (!selectedTicketId) return
+    setSaving(true)
+    try {
+      await adminFetch(`/admin/tickets/${selectedTicketId}/merge`, {
+        method: 'POST',
+        body: { source_ticket_id: sourceTicketId },
+      })
+      toast.success('Ticket merged')
+      await Promise.all([fetchDetails(selectedTicketId), fetchTickets()])
+    } catch {
+      toast.error('Failed to merge ticket')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   useEffect(() => {
     fetchTickets()
-    fetchNotifications()
-    const interval = setInterval(() => {
-      fetchTickets()
-      fetchNotifications()
-    }, 15_000)
+    const interval = setInterval(fetchTickets, 15_000)
     return () => clearInterval(interval)
-  }, [fetchTickets, fetchNotifications])
+  }, [fetchTickets])
 
   useEffect(() => {
     if (selectedTicketId) {
       fetchDetails(selectedTicketId)
-      setReply('')
-      setNoteContent('')
+      fetchAnalysis(selectedTicketId)
       const interval = setInterval(() => fetchDetails(selectedTicketId), 5_000)
       return () => clearInterval(interval)
-    } else {
-      setDetails(null)
     }
-  }, [selectedTicketId, fetchDetails])
+  }, [selectedTicketId, fetchDetails, fetchAnalysis])
 
   useEffect(() => {
     if (selectedTicket?.customer_id) {
@@ -500,524 +387,439 @@ export default function SupportTicketsPage() {
   }, [selectedTicket?.customer_id, selectedTicket?.assigned_to, fetchCustomer, fetchCustomerTickets])
 
   return (
-    <Container>
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <Heading>Support Tickets</Heading>
-          <Text className="text-ui-fg-subtle mt-1">
-            {tickets.length} ticket{tickets.length !== 1 ? 's' : ''} total
-          </Text>
-        </div>
-        <div className="flex items-center gap-4">
-          {!loadingNotifications && recentTicketCount > 0 && (
-            <Badge color="red" size="small">
-              {recentTicketCount} recent
-            </Badge>
-          )}
-          <Button variant="secondary" size="small" onClick={fetchTickets} disabled={loadingTickets}>
-            Refresh
-          </Button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-[minmax(360px,1fr)_minmax(400px,1fr)] gap-4">
-        {/* Ticket List */}
-        <div className="rounded-lg border bg-ui-bg-base">
-          <div className="border-b p-4 space-y-3">
+    <Container className="p-0 overflow-hidden bg-ui-bg-subtle/20">
+      <div className="flex h-[calc(100vh-64px)] overflow-hidden">
+        {/* Left: Sidebar */}
+        <div className="w-[380px] flex-shrink-0 border-r bg-ui-bg-base flex flex-col shadow-sm z-10">
+          <div className="p-6 border-b space-y-4 bg-ui-bg-base/50 backdrop-blur-sm">
+            <div className="flex items-center justify-between">
+              <Heading level="h1" className="text-xl font-bold flex items-center gap-2">
+                <ChatBubbleLeftRight className="text-ui-fg-interactive" />
+                Tickets
+              </Heading>
+              <Button variant="secondary" size="small" onClick={fetchTickets} disabled={loadingTickets}>
+                <Clock className={`h-4 w-4 ${loadingTickets ? 'animate-spin' : ''}`} />
+              </Button>
+            </div>
             <Input
-              placeholder="Search tickets..."
+              size="small"
+              placeholder="Search subject, order, or customer..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
             <div className="flex gap-2">
               <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <Select.Trigger>
-                  <Select.Value placeholder="Status" />
+                <Select.Trigger className="h-8">
+                  <Select.Value />
                 </Select.Trigger>
                 <Select.Content>
-                  <Select.Item value="all">All Statuses</Select.Item>
-                  {STATUS_OPTIONS.map((status) => (
-                    <Select.Item key={status} value={status}>
-                      {formatLabel(status)}
-                    </Select.Item>
+                  <Select.Item value="all">All Status</Select.Item>
+                  {STATUS_OPTIONS.map((s) => (
+                    <Select.Item key={s} value={s}>{formatLabel(s)}</Select.Item>
                   ))}
                 </Select.Content>
               </Select>
               <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                <Select.Trigger>
-                  <Select.Value placeholder="Category" />
+                <Select.Trigger className="h-8">
+                  <Select.Value />
                 </Select.Trigger>
                 <Select.Content>
                   <Select.Item value="all">All Categories</Select.Item>
-                  {CATEGORY_OPTIONS.map((category) => (
-                    <Select.Item key={category} value={category}>
-                      {formatLabel(category)}
-                    </Select.Item>
+                  {CATEGORY_OPTIONS.map((c) => (
+                    <Select.Item key={c} value={c}>{formatLabel(c)}</Select.Item>
                   ))}
                 </Select.Content>
               </Select>
             </div>
-            {selectedTicketIds.size > 0 && (
-              <div className="flex flex-wrap items-center gap-2 rounded border bg-ui-bg-subtle p-3">
-                <Text size="small" weight="plus">
-                  {selectedTicketIds.size} selected
-                </Text>
-                <Select
-                  onValueChange={(status) => bulkUpdateTickets({ status })}
-                  disabled={bulkSaving}
-                >
-                  <Select.Trigger className="w-40">
-                    <Select.Value placeholder="Set status" />
-                  </Select.Trigger>
-                  <Select.Content>
-                    {STATUS_OPTIONS.map((status) => (
-                      <Select.Item key={status} value={status}>{formatLabel(status)}</Select.Item>
-                    ))}
-                  </Select.Content>
-                </Select>
-                <Input
-                  className="w-48"
-                  value={bulkAssignedTo}
-                  onChange={(event) => setBulkAssignedTo(event.target.value)}
-                  placeholder="Assign admin ID"
-                  disabled={bulkSaving}
-                />
-                <Button
-                  size="small"
-                  variant="secondary"
-                  onClick={() => bulkUpdateTickets({ assigned_to: bulkAssignedTo.trim() || null })}
-                  isLoading={bulkSaving}
-                >
-                  Assign
-                </Button>
-                <Button
-                  size="small"
-                  variant="transparent"
-                  onClick={() => setSelectedTicketIds(new Set())}
-                  disabled={bulkSaving}
-                >
-                  Clear
-                </Button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto custom-scrollbar">
+            {loadingTickets && tickets.length === 0 ? (
+              <div className="flex h-64 items-center justify-center">
+                <Spinner className="animate-spin text-ui-fg-interactive" />
+              </div>
+            ) : filteredTickets.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full p-12 text-center text-ui-fg-subtle opacity-50">
+                <ChatBubbleLeftRight className="mb-4 h-12 w-12" />
+                <Text size="small">No matching tickets.</Text>
+              </div>
+            ) : (
+              <div className="divide-y divide-ui-border-base">
+                {filteredTickets.map((ticket) => (
+                  <div
+                    key={ticket.id}
+                    onClick={() => setSelectedTicketId(ticket.id)}
+                    className={`p-5 cursor-pointer transition-all duration-200 hover:bg-ui-bg-subtle group border-l-4 ${
+                      ticket.id === selectedTicketId 
+                        ? 'bg-ui-bg-subtle-pressed border-l-ui-fg-interactive shadow-inner' 
+                        : 'border-l-transparent'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3 mb-2">
+                      <Text size="small" weight="plus" className="line-clamp-1 flex-1 group-hover:text-ui-fg-base transition-colors">
+                        {ticket.subject}
+                      </Text>
+                      <Badge size="2xsmall" color={statusColor(ticket.status)}>
+                        {ticket.status}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center justify-between text-ui-fg-subtle">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <User className="h-3.5 w-3.5 flex-shrink-0" />
+                        <Text size="xsmall" className="truncate">
+                          {ticket.customer_id.split('_').pop()}
+                        </Text>
+                      </div>
+                      <Text size="xsmall">{formatTime(ticket.updated_at)}</Text>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
-
-          {loadingTickets ? (
-            <div className="flex h-72 items-center justify-center">
-              <Spinner className="animate-spin" />
-            </div>
-          ) : filteredTickets.length === 0 ? (
-            <div className="flex h-72 items-center justify-center">
-              <Text className="text-ui-fg-subtle">No tickets found.</Text>
-            </div>
-          ) : (
-            <Table>
-              <Table.Header>
-                <Table.Row>
-                  <Table.HeaderCell className="w-10">
-                    <Checkbox
-                      checked={filteredTickets.length > 0 && filteredTickets.every((ticket) => selectedTicketIds.has(ticket.id))}
-                      onCheckedChange={(checked) => {
-                        setSelectedTicketIds((current) => {
-                          const next = new Set(current)
-                          for (const ticket of filteredTickets) {
-                            if (checked) {
-                              next.add(ticket.id)
-                            } else {
-                              next.delete(ticket.id)
-                            }
-                          }
-                          return next
-                        })
-                      }}
-                    />
-                  </Table.HeaderCell>
-                  <Table.HeaderCell>Ticket</Table.HeaderCell>
-                  <Table.HeaderCell>Status</Table.HeaderCell>
-                  <Table.HeaderCell>Updated</Table.HeaderCell>
-                </Table.Row>
-              </Table.Header>
-              <Table.Body>
-                {filteredTickets.map((ticket) => (
-                  <Table.Row
-                    key={ticket.id}
-                    onClick={() => setSelectedTicketId(ticket.id)}
-                    className={`cursor-pointer ${ticket.id === selectedTicketId ? 'bg-ui-bg-subtle' : ''}`}
-                  >
-                    <Table.Cell onClick={(event) => event.stopPropagation()}>
-                      <Checkbox
-                        checked={selectedTicketIds.has(ticket.id)}
-                        onCheckedChange={(checked) => toggleTicketSelection(ticket.id, checked === true)}
-                      />
-                    </Table.Cell>
-                    <Table.Cell>
-                      <div className="max-w-sm">
-                        <Text size="small" weight="plus" className="truncate">
-                          {ticket.subject}
-                        </Text>
-                        <Text size="xsmall" className="text-ui-fg-subtle">
-                          {formatLabel(ticket.category)} · {ticket.customer_id}
-                        </Text>
-                      </div>
-                    </Table.Cell>
-                    <Table.Cell>
-                      <Badge size="2xsmall" color={statusColor(ticket.status)}>
-                        {formatLabel(ticket.status)}
-                      </Badge>
-                    </Table.Cell>
-                    <Table.Cell>
-                      <Text size="small" className="text-ui-fg-subtle whitespace-nowrap">
-                        {formatDate(ticket.updated_at)}
-                      </Text>
-                    </Table.Cell>
-                  </Table.Row>
-                ))}
-              </Table.Body>
-            </Table>
-          )}
         </div>
 
-        {/* Ticket Detail Panel */}
-        <div className="rounded-lg border bg-ui-bg-base">
+        {/* Center: Workspace */}
+        <div className="flex-1 flex flex-col bg-ui-bg-subtle/5 relative">
           {!selectedTicket ? (
-            <div className="flex h-full min-h-96 items-center justify-center p-8 text-center">
-              <Text className="text-ui-fg-subtle">Select a ticket to view the conversation.</Text>
+            <div className="h-full flex flex-col items-center justify-center max-w-lg mx-auto text-center animate-in fade-in zoom-in duration-500">
+              <div className="w-24 h-24 rounded-3xl bg-ui-bg-base shadow-xl flex items-center justify-center mb-8 border border-ui-border-base rotate-3">
+                <ChatBubbleLeftRight className="h-12 w-12 text-ui-fg-interactive" />
+              </div>
+              <Heading level="h2" className="text-2xl mb-2">Support Workspace</Heading>
+              <Text className="text-ui-fg-subtle">Select a conversation to start helping customers.</Text>
             </div>
           ) : (
-            <div className="flex h-full min-h-96 flex-col">
-              <div className="border-b p-4">
-                <div className="mb-4 flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <Heading level="h2" className="truncate">
-                      {selectedTicket.subject}
-                    </Heading>
-                    <a
-                      href={loadingCustomer ? '#' : `/customers/${selectedTicket.customer_id}`}
-                      onClick={loadingCustomer ? (e) => e.preventDefault() : undefined}
-                      className="mt-1 inline-block text-small text-ui-fg-subtle hover:text-ui-fg-base"
-                      title={loadingCustomer ? 'Loading customer...' : `Customer: ${selectedTicket.customer_id}`}
-                    >
-                      {loadingCustomer ? (
-                        <span className="inline-flex items-center gap-1">
-                          <Spinner className="animate-spin" />
-                          Loading...
-                        </span>
-                      ) : customerName ? (
-                        `${customerName} · ${customerEmail}`
-                      ) : (
-                        `${selectedTicket.customer_id} (unavailable)`
-                      )}
-                    </a>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    {selectedTicket.order_id ? (
-                      <a href={`/orders/${selectedTicket.order_id}`}>
-                        <Badge size="small">Order #{selectedTicket.order_id.slice(-8)}</Badge>
-                      </a>
-                    ) : (
-                      <Badge size="small" className="text-ui-fg-subtle">No order</Badge>
-                    )}
-                    <Button
-                      size="small"
-                      variant="secondary"
-                      onClick={() => setShowMergeModal(true)}
-                    >
-                      Merge
-                    </Button>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <Label>Status</Label>
-                    <Select
-                      value={selectedTicket.status}
-                      onValueChange={(status) => updateTicket({ status })}
-                      disabled={saving}
-                    >
-                      <Select.Trigger>
-                        <Select.Value />
-                      </Select.Trigger>
-                      <Select.Content>
-                        {STATUS_OPTIONS.map((status) => (
-                          <Select.Item key={status} value={status}>
-                            {formatLabel(status)}
-                          </Select.Item>
-                        ))}
-                      </Select.Content>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label>Assigned To</Label>
-                    <Input
-                      value={assignedToInput}
-                      onChange={(event) => setAssignedToInput(event.target.value)}
-                      onBlur={() => {
-                        const value = assignedToInput.trim()
-                        if (value !== (selectedTicket.assigned_to ?? '')) {
-                          updateTicket({ assigned_to: value || null })
-                        }
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          const value = assignedToInput.trim()
-                          if (value !== (selectedTicket.assigned_to ?? '')) {
-                            updateTicket({ assigned_to: value || null })
-                          }
-                        }
-                      }}
-                      placeholder="Admin user ID"
-                      disabled={saving}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="border-b p-4">
-                <Text size="small" leading="compact" weight="plus">Customer History</Text>
-                {loadingCustomerTickets ? (
-                  <div className="mt-2 flex items-center gap-2">
-                    <Spinner className="animate-spin" />
-                    <Text size="small" className="text-ui-fg-subtle">Loading previous tickets...</Text>
-                  </div>
-                ) : customerTickets.filter((ticket) => ticket.id !== selectedTicket.id).length === 0 ? (
-                  <Text size="small" className="mt-2 text-ui-fg-subtle">No previous tickets.</Text>
-                ) : (
-                  <div className="mt-2 space-y-2">
-                    {customerTickets
-                      .filter((ticket) => ticket.id !== selectedTicket.id)
-                      .map((ticket) => (
-                        <button
-                          key={ticket.id}
-                          type="button"
-                          onClick={() => setSelectedTicketId(ticket.id)}
-                          className="block w-full rounded border p-2 text-left hover:bg-ui-bg-subtle"
-                        >
-                          <Text size="small" weight="plus" className="truncate">{ticket.subject}</Text>
-                          <Text size="xsmall" className="text-ui-fg-subtle">
-                            {formatLabel(ticket.status)} · {formatDate(ticket.created_at)}
-                          </Text>
-                        </button>
-                      ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Messages */}
-              <div className="flex-1 space-y-3 overflow-y-auto p-4">
-                {details?.messages.length ? (
-                  details.messages.map((message) => (
-                    <div
-                      key={message.id}
-                      className={`rounded-md border p-3 ${
-                        message.sender_type === 'admin' ? 'bg-ui-bg-subtle' : 'bg-ui-bg-base'
-                      }`}
-                    >
-                      <div className="mb-2 flex items-center justify-between gap-2">
-                        <Badge size="2xsmall" color={message.sender_type === 'admin' ? 'blue' : 'green'}>
-                          {formatLabel(message.sender_type)}
-                        </Badge>
-                        <Text size="xsmall" className="text-ui-fg-subtle">
-                          {formatDate(message.created_at)}
-                        </Text>
-                      </div>
-                      <Text size="small" className="whitespace-pre-wrap">
-                        {message.message}
-                      </Text>
-                      {(() => {
-                        const messageAttachments = normalizeAttachments(message.attachments)
-                        if (messageAttachments.length === 0) return null
-                        return (
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            {messageAttachments.map((attachment, index) => (
-                              <a
-                                key={index}
-                                href={getAttachmentUrl(attachment)}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-small text-ui-fg-interactive hover:underline"
-                              >
-                                📄 {attachment.filename}
-                              </a>
-                            ))}
-                          </div>
-                        )
-                      })()}
+            <>
+              {/* Workspace Header */}
+              <div className="flex items-center justify-between border-b px-8 py-6 bg-ui-bg-base/80 backdrop-blur-md sticky top-0 z-20">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-3 mb-1">
+                    <Badge size="2xsmall" className="font-mono">#{selectedTicket.id.split('_').pop()}</Badge>
+                    <div className="flex items-center gap-1.5 text-ui-fg-subtle">
+                      <Clock className="h-3.5 w-3.5" />
+                      <Text size="xsmall">{new Date(selectedTicket.created_at).toLocaleString()}</Text>
                     </div>
-                  ))
-                ) : loadingDetails ? (
-                  <div className="flex justify-center py-8">
-                    <Spinner className="animate-spin" />
                   </div>
-                ) : (
-                  <Text className="text-ui-fg-subtle">No messages yet.</Text>
-                )}
+                  <Heading level="h1" className="text-2xl font-bold tracking-tight line-clamp-1">{selectedTicket.subject}</Heading>
+                </div>
+                <div className="flex items-center gap-3">
+                  {selectedTicket.order_id && (
+                    <a href={`/orders/${selectedTicket.order_id}`} target="_blank" rel="noreferrer">
+                      <Badge color="orange" className="h-9 px-4 cursor-pointer hover:bg-orange-100 transition-colors gap-1.5">
+                        Order #{selectedTicket.order_id.slice(-8)}
+                      </Badge>
+                    </a>
+                  )}
+                  <Button variant="secondary" size="small" className="h-9 px-4" onClick={() => setShowMergeModal(true)}>Merge</Button>
+                  <Button variant="danger" size="small" className="h-9 px-3" onClick={() => {/* Delete logic if needed */}}><Trash /></Button>
+                </div>
               </div>
 
-              {/* Notes */}
-              {details && (
-                <div className="border-t p-4">
-                  <Heading level="h3" className="mb-3">Notes</Heading>
-                  {details.notes.length > 0 && (
-                    <div className="mb-4 space-y-2 max-h-40 overflow-y-auto">
-                      {details.notes.map((note) => (
-                        <div key={note.id} className="rounded border bg-ui-bg-subtle p-2">
-                          <div className="flex items-center justify-between gap-2 mb-1">
-                            <Text size="xsmall" className="text-ui-fg-muted">
-                              {formatDate(note.created_at)}
-                              {note.author_id && ` · ${note.author_id}`}
+              {/* Tabs & Content */}
+              <div className="flex-1 flex flex-col min-h-0">
+                <div className="px-8 pt-6">
+                  <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
+                    <Tabs.List className="w-fit">
+                      <Tabs.Trigger value="conversation">Conversation</Tabs.Trigger>
+                      <Tabs.Trigger value="notes">Notes ({details?.notes.length || 0})</Tabs.Trigger>
+                      <Tabs.Trigger value="events">Activity Log</Tabs.Trigger>
+                    </Tabs.List>
+                  </Tabs>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
+                  {activeTab === 'conversation' && (
+                    <div className="max-w-4xl mx-auto space-y-6">
+                      {loadingDetails && !details ? (
+                        <div className="flex h-64 items-center justify-center"><Spinner className="animate-spin" /></div>
+                      ) : details?.messages.length ? (
+                        details.messages.map((msg) => (
+                          <div key={msg.id} className={`flex flex-col ${msg.sender_type === 'customer' ? 'items-start' : 'items-end'}`}>
+                            <div className={`max-w-[75%] rounded-2xl p-5 text-sm shadow-sm transition-all hover:shadow-md ${
+                              msg.sender_type === 'customer' 
+                                ? 'bg-ui-bg-base border rounded-tl-none text-ui-fg-base' 
+                                : 'bg-ui-bg-interactive text-ui-fg-on-color rounded-tr-none'
+                            }`}>
+                              <Text size="small" className="whitespace-pre-wrap leading-relaxed">{msg.message}</Text>
+                              {(() => {
+                                const attachments = normalizeAttachments(msg.attachments)
+                                if (attachments.length === 0) return null
+                                return (
+                                  <div className="mt-4 pt-3 border-t border-current/10 flex flex-wrap gap-2">
+                                    {attachments.map((a, i) => (
+                                      <a key={i} href={getAttachmentUrl(a)} target="_blank" rel="noreferrer" 
+                                         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors ${
+                                           msg.sender_type === 'customer' ? 'bg-ui-bg-subtle hover:bg-ui-bg-subtle-pressed' : 'bg-white/10 hover:bg-white/20'
+                                         }`}>
+                                        <PaperClip className="h-3 w-3" /> {a.filename}
+                                      </a>
+                                    ))}
+                                  </div>
+                                )
+                              })()}
+                            </div>
+                            <Text size="xsmall" className="text-ui-fg-subtle mt-2 px-1">
+                              {formatLabel(msg.sender_type)} • {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                             </Text>
                           </div>
-                          <Text size="small" className="whitespace-pre-wrap">{note.content}</Text>
-                        </div>
-                      ))}
+                        ))
+                      ) : (
+                        <div className="text-center py-20 opacity-30"><Text>No messages yet.</Text></div>
+                      )}
                     </div>
                   )}
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="Add an internal note..."
-                      value={noteContent}
-                      onChange={(e) => setNoteContent(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault()
-                          addNote()
-                        }
-                      }}
-                    />
-                    <Button
-                      variant="secondary"
-                      size="small"
-                      onClick={addNote}
-                      disabled={!noteContent.trim() || addingNote}
-                      isLoading={addingNote}
-                    >
-                      Add
-                    </Button>
-                  </div>
-                </div>
-              )}
 
-              {/* Reply */}
-              <div className="border-t p-4">
-                <Label htmlFor="support-ticket-reply">Reply</Label>
-                <div className="mb-2">
-                  <Select
-                    onValueChange={(label) => {
-                      const cannedResponse = CANNED_RESPONSES.find((item) => item.label === label)
-                      if (!cannedResponse) return
-                      setReply((current) => current.trim()
-                        ? `${current.trim()}\n\n${cannedResponse.value}`
-                        : cannedResponse.value)
-                    }}
-                  >
-                    <Select.Trigger>
-                      <Select.Value placeholder="Insert canned response" />
-                    </Select.Trigger>
-                    <Select.Content>
-                      {CANNED_RESPONSES.map((response) => (
-                        <Select.Item key={response.label} value={response.label}>
-                          {response.label}
-                        </Select.Item>
-                      ))}
-                    </Select.Content>
-                  </Select>
+                  {activeTab === 'notes' && (
+                    <div className="max-w-3xl mx-auto space-y-6">
+                      <div className="rounded-2xl border bg-ui-bg-base p-6 shadow-sm">
+                        <Heading level="h3" className="mb-4 flex items-center gap-2"><PaperClip className="h-4 w-4" />Internal Notes</Heading>
+                        <div className="space-y-4 mb-6">
+                          {details?.notes.map(note => (
+                            <div key={note.id} className="p-4 rounded-xl bg-ui-bg-subtle/50 border border-ui-border-base relative group">
+                              <div className="flex items-center justify-between mb-2">
+                                <Text size="xsmall" weight="plus" className="text-ui-fg-subtle">{note.author_id || 'System'} • {formatDate(note.created_at)}</Text>
+                              </div>
+                              <Text size="small" className="italic text-ui-fg-subtle leading-relaxed">"{note.content}"</Text>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="flex flex-col gap-3">
+                          <Textarea 
+                            placeholder="Add an internal note only admins can see..." 
+                            value={noteContent} 
+                            onChange={e => setNoteContent(e.target.value)} 
+                            className="bg-ui-bg-subtle border-none shadow-inner"
+                          />
+                          <Button variant="secondary" className="w-fit self-end" onClick={addNote} isLoading={addingNote} disabled={!noteContent.trim()}>Add Note</Button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {activeTab === 'events' && (
+                    <div className="max-w-2xl mx-auto">
+                      <div className="relative pl-8 space-y-8 before:absolute before:left-3 before:top-2 before:bottom-2 before:w-[1px] before:bg-ui-border-base">
+                        {details?.events.map(event => (
+                          <div key={event.id} className="relative">
+                            <div className="absolute -left-8 top-1 h-2.5 w-2.5 rounded-full bg-ui-bg-base border-2 border-ui-fg-interactive z-10" />
+                            <div className="bg-ui-bg-base border rounded-xl p-4 shadow-sm">
+                              <Text size="small" weight="plus">{formatLabel(event.event_type)}</Text>
+                              <Text size="xsmall" className="text-ui-fg-subtle mt-1">{formatDate(event.created_at)}</Text>
+                              {event.data && <pre className="mt-2 text-[10px] bg-ui-bg-subtle p-2 rounded overflow-auto max-h-32">{JSON.stringify(event.data, null, 2)}</pre>}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <Textarea
-                  id="support-ticket-reply"
-                  rows={4}
-                  value={reply}
-                  onChange={(event) => setReply(event.target.value)}
-                  placeholder="Write a response to the customer"
-                />
-                {pendingAttachments.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {pendingAttachments.map((attachment, index) => (
-                      <Badge
-                        key={index}
-                        size="small"
-                        className="flex items-center gap-1 pr-1"
-                      >
-                        <span className="max-w-32 truncate">{attachment.filename}</span>
-                        <span className="text-ui-fg-subtle">({formatFileSize(attachment.size)})</span>
-                        <button
-                          type="button"
-                          onClick={() => removePendingAttachment(index)}
-                          className="ml-1 cursor-pointer text-ui-fg-subtle hover:text-ui-fg-base"
-                          aria-label={`Remove ${attachment.filename}`}
+
+                {/* Reply Footer */}
+                <div className="px-8 pb-8">
+                  <div className="rounded-3xl border bg-ui-bg-base shadow-xl overflow-hidden flex flex-col">
+                    {analysis && (
+                      <div className="px-6 py-4 bg-ui-bg-subtle/30 border-b flex items-center justify-between animate-in fade-in slide-in-from-top-2">
+                        <div className="flex items-center gap-3">
+                          <Sparkles className="text-ui-fg-interactive h-5 w-5" />
+                          <div>
+                            <Text size="small" weight="plus">AI Smart Suggestion</Text>
+                            <Text size="xsmall" className="text-ui-fg-subtle">Confidence: {Math.round((analysis.response_confidence || 0) * 100)}%</Text>
+                          </div>
+                        </div>
+                        <Button 
+                          variant="secondary" 
+                          size="small" 
+                          className="h-8 gap-1.5"
+                          onClick={() => setReply(analysis.suggested_response || '')}
                         >
-                          ×
-                        </button>
-                      </Badge>
-                    ))}
+                          Use Suggestion <ChevronRight className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    )}
+                    
+                    <div className="p-6 space-y-4">
+                      <div className="flex gap-4">
+                        <div className="flex-1">
+                          <Textarea
+                            placeholder="Type your reply to the customer..."
+                            rows={4}
+                            value={reply}
+                            onChange={e => setReply(e.target.value)}
+                            className="bg-ui-bg-subtle/50 border-ui-border-base focus:border-ui-fg-interactive resize-none text-base leading-relaxed"
+                          />
+                        </div>
+                        <div className="w-[240px] space-y-3">
+                          <Label className="text-ui-fg-subtle text-[10px] uppercase tracking-widest font-bold">Quick Actions</Label>
+                          <Select onValueChange={(v) => setReply(prev => prev ? `${prev}\n\n${v}` : v)}>
+                            <Select.Trigger className="h-9">
+                              <Select.Value placeholder="Canned Responses" />
+                            </Select.Trigger>
+                            <Select.Content>
+                              {CANNED_RESPONSES.map(r => <Select.Item key={r.label} value={r.value}>{r.label}</Select.Item>)}
+                            </Select.Content>
+                          </Select>
+                          <Button variant="secondary" className="w-full h-9 gap-2" onClick={() => fileInputRef.current?.click()} isLoading={uploadingFiles}>
+                            <PaperClip className="h-4 w-4" /> Attach Files
+                          </Button>
+                          <input ref={fileInputRef} type="file" multiple className="hidden" onChange={e => e.target.files && uploadFiles(e.target.files)} />
+                        </div>
+                      </div>
+
+                      {pendingAttachments.length > 0 && (
+                        <div className="flex flex-wrap gap-2 pt-2">
+                          {pendingAttachments.map((a, i) => (
+                            <Badge key={i} size="small" className="pr-1 gap-1.5">
+                              {a.filename}
+                              <button onClick={() => setPendingAttachments(p => p.filter((_, idx) => idx !== i))} className="hover:text-ui-fg-base text-ui-fg-subtle">×</button>
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-between pt-4 border-t border-ui-border-base">
+                        <div className="flex items-center gap-6">
+                          <div className="flex flex-col">
+                            <Text size="xsmall" className="text-ui-fg-subtle uppercase tracking-tighter">Status after reply</Text>
+                            <Select value={selectedTicket.status} onValueChange={s => updateTicket({ status: s })}>
+                              <Select.Trigger className="border-none p-0 h-6 w-fit bg-transparent shadow-none hover:text-ui-fg-base text-ui-fg-interactive transition-colors">
+                                <Select.Value />
+                              </Select.Trigger>
+                              <Select.Content>{STATUS_OPTIONS.map(s => <Select.Item key={s} value={s}>{formatLabel(s)}</Select.Item>)}</Select.Content>
+                            </Select>
+                          </div>
+                        </div>
+                        <Button 
+                          className="h-11 px-8 rounded-2xl shadow-lg shadow-ui-fg-interactive/20 transition-all hover:translate-y-[-1px] active:translate-y-[0px]"
+                          onClick={sendReply}
+                          disabled={(!reply.trim() && pendingAttachments.length === 0) || saving}
+                          isLoading={saving}
+                        >
+                          Send Response
+                        </Button>
+                      </div>
+                    </div>
                   </div>
-                )}
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  accept="image/*,.pdf,.doc,.docx,.txt,.csv,.xlsx"
-                  onChange={(event) => event.target.files && uploadFiles(event.target.files)}
-                  className="hidden"
-                />
-                <div className="mt-3 flex justify-end gap-2">
-                  <Button
-                    variant="secondary"
-                    size="small"
-                    onClick={handleAttachClick}
-                    disabled={uploadingFiles}
-                    isLoading={uploadingFiles}
-                  >
-                    Attach
-                  </Button>
-                  <Button onClick={sendReply} disabled={(!reply.trim() && pendingAttachments.length === 0) || saving} isLoading={saving}>
-                    Send Reply
-                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Right: Context Sidebar */}
+        {selectedTicket && (
+          <div className="w-[320px] border-l bg-ui-bg-base flex flex-col p-8 space-y-8 animate-in slide-in-from-right-4 duration-500 overflow-y-auto custom-scrollbar">
+            <div>
+              <Text size="xsmall" weight="plus" className="text-ui-fg-subtle uppercase tracking-widest font-bold mb-4">Intelligence</Text>
+              {loadingAnalysis ? (
+                <div className="flex items-center gap-2"><Spinner className="animate-spin h-3 w-3" /><Text size="xsmall">Analyzing...</Text></div>
+              ) : analysis ? (
+                <div className="space-y-6">
+                  <div className="p-4 rounded-2xl border bg-ui-bg-subtle/30 space-y-4">
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <Text size="xsmall" className="text-ui-fg-subtle">Category</Text>
+                        <Badge size="small" color="blue">{formatLabel(analysis.category || 'Unknown')}</Badge>
+                      </div>
+                      <div className="w-full bg-ui-bg-subtle h-1 rounded-full overflow-hidden">
+                        <div className="h-full bg-ui-fg-interactive transition-all duration-1000" style={{ width: `${(analysis.category_confidence || 0) * 100}%` }} />
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <Text size="xsmall" className="text-ui-fg-subtle">Priority</Text>
+                      <Badge size="small" color={analysis.suggested_priority === 'high' ? 'red' : 'orange'}>{formatLabel(analysis.suggested_priority || 'Normal')}</Badge>
+                    </div>
+                  </div>
+                  <div className={`p-4 rounded-2xl border flex items-center justify-between ${analysis.auto_reply_eligible ? 'bg-green-50/30 border-green-100' : 'bg-ui-bg-subtle/10 border-ui-border-base'}`}>
+                    <Text size="xsmall" className="text-ui-fg-subtle">Automation</Text>
+                    {analysis.auto_reply_eligible ? (
+                      <div className="flex items-center gap-1.5 text-ui-fg-success"><CheckCircleSolid className="h-4 w-4" /><Text size="xsmall" weight="plus">Eligible</Text></div>
+                    ) : (
+                      <div className="flex items-center gap-1.5 text-ui-fg-muted"><XCircleSolid className="h-4 w-4" /><Text size="xsmall">Manual Only</Text></div>
+                    )}
+                  </div>
+                </div>
+              ) : <Text size="xsmall" className="text-ui-fg-subtle italic">No AI insights available for this ticket.</Text>}
+            </div>
+
+            <div className="border-t pt-8">
+              <Text size="xsmall" weight="plus" className="text-ui-fg-subtle uppercase tracking-widest font-bold mb-4">Customer Info</Text>
+              <div className="space-y-4">
+                <div className="flex flex-col">
+                  <Text size="small" weight="plus" className="truncate">{customerName || 'Loading...'}</Text>
+                  <Text size="xsmall" className="text-ui-fg-subtle truncate">{customerEmail || '...'}</Text>
+                </div>
+                <div className="grid grid-cols-2 gap-4 pt-2">
+                  <div>
+                    <Text size="xsmall" className="text-ui-fg-subtle mb-1">Assigned To</Text>
+                    <Input 
+                      className="h-8 text-xs bg-ui-bg-subtle border-none" 
+                      value={assignedToInput} 
+                      onChange={e => setAssignedToInput(e.target.value)} 
+                      onBlur={() => assignedToInput !== (selectedTicket.assigned_to ?? '') && updateTicket({ assigned_to: assignedToInput.trim() || null })}
+                      placeholder="Admin ID"
+                    />
+                  </div>
+                  <div>
+                    <Text size="xsmall" className="text-ui-fg-subtle mb-1">Status</Text>
+                    <Badge size="small" color={statusColor(selectedTicket.status)}>{formatLabel(selectedTicket.status)}</Badge>
+                  </div>
                 </div>
               </div>
             </div>
-          )}
-        </div>
+
+            <div className="border-t pt-8">
+              <div className="flex items-center justify-between mb-4">
+                <Text size="xsmall" weight="plus" className="text-ui-fg-subtle uppercase tracking-widest font-bold">History</Text>
+                <Badge size="2xsmall">{customerTickets.length} tickets</Badge>
+              </div>
+              <div className="space-y-3">
+                {customerTickets.filter(t => t.id !== selectedTicket.id).slice(0, 5).map(t => (
+                  <button key={t.id} onClick={() => setSelectedTicketId(t.id)} className="w-full text-left p-3 rounded-xl border bg-ui-bg-subtle/20 hover:bg-ui-bg-subtle transition-all group">
+                    <Text size="xsmall" weight="plus" className="line-clamp-1 group-hover:text-ui-fg-base">{t.subject}</Text>
+                    <div className="flex items-center gap-2 mt-1 opacity-60">
+                      <Badge size="2xsmall" color={statusColor(t.status)}>{t.status}</Badge>
+                      <Text size="xsmall">{new Date(t.created_at).toLocaleDateString()}</Text>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Merge modal */}
+      {/* Merge Modal */}
       {showMergeModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-full max-w-md rounded-lg border bg-ui-bg-base p-6 shadow-lg">
-            <Heading level="h2" className="mb-4">Merge Ticket</Heading>
-            <Text size="small" className="mb-4 text-ui-fg-subtle">
-              This ticket will become the target. Enter the ID of the source ticket to merge into this one.
-              Both tickets must belong to the same customer.
-            </Text>
-            <div className="mb-4 space-y-2">
-              <Label>Source Ticket ID</Label>
-              <Input
-                value={mergeSourceId}
-                onChange={(e) => setMergeSourceId(e.target.value)}
-                placeholder="ticket_..."
-              />
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-ui-bg-base rounded-3xl shadow-2xl border p-8 space-y-6">
+            <div>
+              <Heading level="h2">Merge Records</Heading>
+              <Text size="small" className="text-ui-fg-subtle mt-1">Combine thread history into this ticket.</Text>
             </div>
-            <div className="flex justify-end gap-2">
-              <Button variant="secondary" onClick={() => { setShowMergeModal(false); setMergeSourceId('') }}>
-                Cancel
-              </Button>
-              <Button
-                onClick={async () => {
-                  if (!mergeSourceId.trim()) return
-                  await mergeTicket(mergeSourceId.trim())
-                  setShowMergeModal(false)
-                  setMergeSourceId('')
-                }}
-                disabled={!mergeSourceId.trim() || saving}
-                isLoading={saving}
-              >
-                Merge
-              </Button>
+            <div className="space-y-2">
+              <Label>Source Ticket ID</Label>
+              <Input placeholder="ticket_..." value={mergeSourceId} onChange={e => setMergeSourceId(e.target.value)} className="bg-ui-bg-subtle" />
+            </div>
+            <div className="flex justify-end gap-3 pt-4">
+              <Button variant="secondary" onClick={() => { setShowMergeModal(false); setMergeSourceId('') }}>Cancel</Button>
+              <Button className="rounded-xl px-6" onClick={() => mergeSourceId.trim() && mergeTicket(mergeSourceId.trim())} isLoading={saving}>Confirm Merge</Button>
             </div>
           </div>
         </div>
       )}
     </Container>
   )
+}
+
+function formatTime(dateString: string) {
+  const date = new Date(dateString)
+  const now = new Date()
+  const diff = Math.floor((now.getTime() - date.getTime()) / 60000)
+  if (diff < 1) return 'Just now'
+  if (diff < 60) return `${diff}m ago`
+  if (diff < 1440) return `${Math.floor(diff / 60)}h ago`
+  return date.toLocaleDateString()
 }
 
 export const config = defineRouteConfig({
