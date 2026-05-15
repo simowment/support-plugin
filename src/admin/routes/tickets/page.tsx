@@ -9,6 +9,7 @@ import {
   User,
   XCircleSolid,
   CheckCircleSolid,
+  ChevronLeft,
   ChevronRight,
 } from '@medusajs/icons'
 import {
@@ -99,9 +100,10 @@ const STATUS_OPTIONS = [
   'in_progress',
   'waiting_customer',
   'waiting_admin',
-  'resolved',
   'closed',
 ]
+
+const ACTIVE_STATUS_OPTIONS = STATUS_OPTIONS.filter((status) => status !== 'closed')
 
 const CATEGORY_OPTIONS = [
   'order_issue',
@@ -129,12 +131,15 @@ const formatDate = (value?: string | null) => {
   return new Date(value).toLocaleString()
 }
 
+const isClosedStatus = (status: string) => status === 'closed' || status === 'resolved'
+const displayStatus = (status: string) => (status === 'resolved' ? 'closed' : status)
+
 const statusColor = (status: string) => {
   switch (status.toLowerCase()) {
     case 'open': return 'blue'
     case 'in_progress': return 'orange'
-    case 'resolved':
-    case 'closed': return 'green'
+    case 'closed':
+    case 'resolved': return 'green'
     case 'waiting_admin': return 'red'
     case 'waiting_customer': return 'grey'
     default: return 'grey'
@@ -162,6 +167,7 @@ export default function SupportTicketsPage() {
   const [details, setDetails] = useState<TicketDetails | null>(null)
   const [analysis, setAnalysis] = useState<AIAnalysis | null>(null)
   const [statusFilter, setStatusFilter] = useState('all')
+  const [ticketTab, setTicketTab] = useState<'active' | 'closed'>('active')
   const [categoryFilter, setCategoryFilter] = useState('all')
   const [search, setSearch] = useState('')
   const [reply, setReply] = useState('')
@@ -181,12 +187,16 @@ export default function SupportTicketsPage() {
   const [showMergeModal, setShowMergeModal] = useState(false)
   const [mergeSourceId, setMergeSourceId] = useState('')
   const [activeTab, setActiveTab] = useState<'conversation' | 'notes' | 'events'>('conversation')
+  const [mobileView, setMobileView] = useState<'list' | 'detail'>('list')
+  const [showContext, setShowContext] = useState(false)
 
   const selectedTicket = details?.ticket ?? tickets.find((ticket) => ticket.id === selectedTicketId)
 
   const filteredTickets = useMemo(() => {
     const term = search.trim().toLowerCase()
     return tickets.filter((ticket) => {
+      if (ticketTab === 'active' && isClosedStatus(ticket.status)) return false
+      if (ticketTab === 'closed' && !isClosedStatus(ticket.status)) return false
       if (statusFilter !== 'all' && ticket.status !== statusFilter) return false
       if (categoryFilter !== 'all' && ticket.category !== categoryFilter) return false
       if (!term) return true
@@ -197,7 +207,10 @@ export default function SupportTicketsPage() {
         Boolean(ticket.order_id?.toLowerCase().includes(term))
       )
     })
-  }, [tickets, statusFilter, categoryFilter, search])
+  }, [tickets, ticketTab, statusFilter, categoryFilter, search])
+
+  const activeTicketCount = tickets.filter((ticket) => !isClosedStatus(ticket.status)).length
+  const closedTicketCount = tickets.length - activeTicketCount
 
   const fetchTickets = useCallback(async () => {
     setLoadingTickets(true)
@@ -363,6 +376,33 @@ export default function SupportTicketsPage() {
     }
   }
 
+  const deleteTicket = async () => {
+    if (!selectedTicketId || !selectedTicket) return
+    const confirmed = window.confirm(`Delete ticket "${selectedTicket.subject}"? This cannot be undone.`)
+    if (!confirmed) return
+
+    setSaving(true)
+    try {
+      await adminFetch(`/admin/tickets/${selectedTicketId}`, { method: 'DELETE' })
+      const remainingTickets = tickets.filter((ticket) => ticket.id !== selectedTicketId)
+
+      setTickets(remainingTickets)
+      setSelectedTicketId(remainingTickets[0]?.id ?? null)
+      setDetails(null)
+      setAnalysis(null)
+      setCustomerName(null)
+      setCustomerEmail(null)
+      setCustomerTickets([])
+      toast.success('Ticket deleted')
+    } catch (error) {
+      toast.error('Failed to delete ticket', {
+        description: error instanceof Error ? error.message : 'Unknown error',
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
   useEffect(() => {
     fetchTickets()
     const interval = setInterval(fetchTickets, 15_000)
@@ -386,12 +426,18 @@ export default function SupportTicketsPage() {
     }
   }, [selectedTicket?.customer_id, selectedTicket?.assigned_to, fetchCustomer, fetchCustomerTickets])
 
+  useEffect(() => {
+    if (!selectedTicketId || !filteredTickets.some((ticket) => ticket.id === selectedTicketId)) {
+      setSelectedTicketId(filteredTickets[0]?.id ?? null)
+    }
+  }, [filteredTickets, selectedTicketId])
+
   return (
-    <Container className="p-0 overflow-hidden bg-ui-bg-subtle/20">
-      <div className="flex h-[calc(100vh-64px)] overflow-hidden">
+    <Container className="p-0 bg-ui-bg-subtle/20">
+      <div className="flex flex-col lg:flex-row h-dvh lg:h-[calc(100vh-57px)] overflow-hidden">
         {/* Left: Sidebar */}
-        <div className="w-[380px] flex-shrink-0 border-r bg-ui-bg-base flex flex-col shadow-sm z-10">
-          <div className="p-6 border-b space-y-4 bg-ui-bg-base/50 backdrop-blur-sm">
+        <div className={`${mobileView === 'detail' ? 'hidden' : 'flex'} lg:flex w-full lg:w-[380px] flex-shrink-0 border-r bg-ui-bg-base flex-col shadow-sm z-10`}>
+          <div className="p-4 lg:p-6 border-b space-y-4 bg-ui-bg-base/50 backdrop-blur-sm">
             <div className="flex items-center justify-between">
               <Heading level="h1" className="text-xl font-bold flex items-center gap-2">
                 <ChatBubbleLeftRight className="text-ui-fg-interactive" />
@@ -407,14 +453,30 @@ export default function SupportTicketsPage() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
+            <Tabs
+              value={ticketTab}
+              onValueChange={(value) => {
+                setTicketTab(value as 'active' | 'closed')
+                setStatusFilter('all')
+              }}
+            >
+              <Tabs.List className="w-full">
+                <Tabs.Trigger value="active" className="flex-1">
+                  Active ({activeTicketCount})
+                </Tabs.Trigger>
+                <Tabs.Trigger value="closed" className="flex-1">
+                  Closed ({closedTicketCount})
+                </Tabs.Trigger>
+              </Tabs.List>
+            </Tabs>
             <div className="flex gap-2">
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <Select value={statusFilter} onValueChange={setStatusFilter} disabled={ticketTab === 'closed'}>
                 <Select.Trigger className="h-8">
                   <Select.Value />
                 </Select.Trigger>
                 <Select.Content>
-                  <Select.Item value="all">All Status</Select.Item>
-                  {STATUS_OPTIONS.map((s) => (
+                  <Select.Item value="all">All Active Statuses</Select.Item>
+                  {ACTIVE_STATUS_OPTIONS.map((s) => (
                     <Select.Item key={s} value={s}>{formatLabel(s)}</Select.Item>
                   ))}
                 </Select.Content>
@@ -433,7 +495,7 @@ export default function SupportTicketsPage() {
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto custom-scrollbar">
+          <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0">
             {loadingTickets && tickets.length === 0 ? (
               <div className="flex h-64 items-center justify-center">
                 <Spinner className="animate-spin text-ui-fg-interactive" />
@@ -448,8 +510,8 @@ export default function SupportTicketsPage() {
                 {filteredTickets.map((ticket) => (
                   <div
                     key={ticket.id}
-                    onClick={() => setSelectedTicketId(ticket.id)}
-                    className={`p-5 cursor-pointer transition-all duration-200 hover:bg-ui-bg-subtle group border-l-4 ${
+                    onClick={() => { setSelectedTicketId(ticket.id); setMobileView('detail') }}
+                    className={`p-4 lg:p-5 cursor-pointer transition-all duration-200 hover:bg-ui-bg-subtle group border-l-4 ${
                       ticket.id === selectedTicketId 
                         ? 'bg-ui-bg-subtle-pressed border-l-ui-fg-interactive shadow-inner' 
                         : 'border-l-transparent'
@@ -460,7 +522,7 @@ export default function SupportTicketsPage() {
                         {ticket.subject}
                       </Text>
                       <Badge size="2xsmall" color={statusColor(ticket.status)}>
-                        {ticket.status}
+                        {formatLabel(displayStatus(ticket.status))}
                       </Badge>
                     </div>
                     <div className="flex items-center justify-between text-ui-fg-subtle">
@@ -480,7 +542,7 @@ export default function SupportTicketsPage() {
         </div>
 
         {/* Center: Workspace */}
-        <div className="flex-1 flex flex-col bg-ui-bg-subtle/5 relative">
+        <div className={`${mobileView === 'list' ? 'hidden' : 'flex'} lg:flex flex-1 flex-col bg-ui-bg-subtle/5 relative min-w-0 min-h-0`}>
           {!selectedTicket ? (
             <div className="h-full flex flex-col items-center justify-center max-w-lg mx-auto text-center animate-in fade-in zoom-in duration-500">
               <div className="w-24 h-24 rounded-3xl bg-ui-bg-base shadow-xl flex items-center justify-center mb-8 border border-ui-border-base rotate-3">
@@ -492,7 +554,14 @@ export default function SupportTicketsPage() {
           ) : (
             <>
               {/* Workspace Header */}
-              <div className="flex items-center justify-between border-b px-8 py-6 bg-ui-bg-base/80 backdrop-blur-md sticky top-0 z-20">
+              <div className="flex items-center gap-3 border-b px-4 lg:px-8 py-4 lg:py-6 bg-ui-bg-base/80 backdrop-blur-md sticky top-0 z-20">
+                <button 
+                  onClick={() => setMobileView('list')} 
+                  className="lg:hidden flex-shrink-0 p-1 -ml-1 rounded-lg hover:bg-ui-bg-subtle transition-colors"
+                  aria-label="Back to tickets"
+                >
+                  <ChevronLeft className="h-5 w-5 text-ui-fg-subtle" />
+                </button>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-3 mb-1">
                     <Badge size="2xsmall" className="font-mono">#{selectedTicket.id.split('_').pop()}</Badge>
@@ -501,24 +570,24 @@ export default function SupportTicketsPage() {
                       <Text size="xsmall">{new Date(selectedTicket.created_at).toLocaleString()}</Text>
                     </div>
                   </div>
-                  <Heading level="h1" className="text-2xl font-bold tracking-tight line-clamp-1">{selectedTicket.subject}</Heading>
+                  <Heading level="h1" className="text-xl lg:text-2xl font-bold tracking-tight line-clamp-1">{selectedTicket.subject}</Heading>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 flex-shrink-0">
                   {selectedTicket.order_id && (
                     <a href={`/orders/${selectedTicket.order_id}`} target="_blank" rel="noreferrer">
-                      <Badge color="orange" className="h-9 px-4 cursor-pointer hover:bg-orange-100 transition-colors gap-1.5">
+                      <Badge color="orange" className="h-8 lg:h-9 px-3 lg:px-4 cursor-pointer hover:bg-orange-100 transition-colors gap-1.5 hidden sm:inline-flex">
                         Order #{selectedTicket.order_id.slice(-8)}
                       </Badge>
                     </a>
                   )}
-                  <Button variant="secondary" size="small" className="h-9 px-4" onClick={() => setShowMergeModal(true)}>Merge</Button>
-                  <Button variant="danger" size="small" className="h-9 px-3" onClick={() => {/* Delete logic if needed */}}><Trash /></Button>
+                  <Button variant="secondary" size="small" className="h-8 lg:h-9 px-3 lg:px-4" onClick={() => setShowMergeModal(true)}>Merge</Button>
+                  <Button variant="danger" size="small" className="h-8 lg:h-9 px-2 lg:px-3" onClick={deleteTicket} disabled={saving}><Trash /></Button>
                 </div>
               </div>
 
               {/* Tabs & Content */}
               <div className="flex-1 flex flex-col min-h-0">
-                <div className="px-8 pt-6">
+                <div className="px-4 lg:px-8 pt-4 lg:pt-6">
                   <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
                     <Tabs.List className="w-fit">
                       <Tabs.Trigger value="conversation">Conversation</Tabs.Trigger>
@@ -528,7 +597,7 @@ export default function SupportTicketsPage() {
                   </Tabs>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
+                <div className="flex-1 overflow-y-auto p-4 lg:p-8 custom-scrollbar min-h-0">
                   {activeTab === 'conversation' && (
                     <div className="max-w-4xl mx-auto space-y-6">
                       {loadingDetails && !details ? (
@@ -616,7 +685,7 @@ export default function SupportTicketsPage() {
                 </div>
 
                 {/* Reply Footer */}
-                <div className="px-8 pb-8">
+                <div className="px-4 lg:px-8 pb-4 lg:pb-8">
                   <div className="rounded-3xl border bg-ui-bg-base shadow-xl overflow-hidden flex flex-col">
                     {analysis && (
                       <div className="px-6 py-4 bg-ui-bg-subtle/30 border-b flex items-center justify-between animate-in fade-in slide-in-from-top-2">
@@ -639,7 +708,7 @@ export default function SupportTicketsPage() {
                     )}
                     
                     <div className="p-6 space-y-4">
-                      <div className="flex gap-4">
+                      <div className="flex flex-col lg:flex-row gap-4">
                         <div className="flex-1">
                           <Textarea
                             placeholder="Type your reply to the customer..."
@@ -649,7 +718,7 @@ export default function SupportTicketsPage() {
                             className="bg-ui-bg-subtle/50 border-ui-border-base focus:border-ui-fg-interactive resize-none text-base leading-relaxed"
                           />
                         </div>
-                        <div className="w-[240px] space-y-3">
+                        <div className="w-full lg:w-[240px] space-y-3">
                           <Label className="text-ui-fg-subtle text-[10px] uppercase tracking-widest font-bold">Quick Actions</Label>
                           <Select onValueChange={(v) => setReply(prev => prev ? `${prev}\n\n${v}` : v)}>
                             <Select.Trigger className="h-9">
@@ -708,84 +777,189 @@ export default function SupportTicketsPage() {
 
         {/* Right: Context Sidebar */}
         {selectedTicket && (
-          <div className="w-[320px] border-l bg-ui-bg-base flex flex-col p-8 space-y-8 animate-in slide-in-from-right-4 duration-500 overflow-y-auto custom-scrollbar">
-            <div>
-              <Text size="xsmall" weight="plus" className="text-ui-fg-subtle uppercase tracking-widest font-bold mb-4">Intelligence</Text>
-              {loadingAnalysis ? (
-                <div className="flex items-center gap-2"><Spinner className="animate-spin h-3 w-3" /><Text size="xsmall">Analyzing...</Text></div>
-              ) : analysis ? (
-                <div className="space-y-6">
-                  <div className="p-4 rounded-2xl border bg-ui-bg-subtle/30 space-y-4">
+          <>
+            {/* Mobile: context FAB */}
+            <button
+              onClick={() => setShowContext(!showContext)} 
+              className="lg:hidden fixed bottom-6 right-6 z-30 h-12 w-12 rounded-full bg-ui-bg-interactive text-ui-fg-on-color shadow-xl flex items-center justify-center hover:opacity-90 transition-all active:scale-95"
+              aria-label="Toggle context panel"
+            >
+              <Sparkles className="h-5 w-5" />
+            </button>
+
+            {/* Desktop context sidebar */}
+            <div className="hidden lg:flex w-[320px] border-l bg-ui-bg-base flex-col p-8 space-y-8 overflow-y-auto custom-scrollbar animate-in slide-in-from-right-4 duration-500">
+              <div>
+                <Text size="xsmall" weight="plus" className="text-ui-fg-subtle uppercase tracking-widest font-bold mb-4">Intelligence</Text>
+                {loadingAnalysis ? (
+                  <div className="flex items-center gap-2"><Spinner className="animate-spin h-3 w-3" /><Text size="xsmall">Analyzing...</Text></div>
+                ) : analysis ? (
+                  <div className="space-y-6">
+                    <div className="p-4 rounded-2xl border bg-ui-bg-subtle/30 space-y-4">
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <Text size="xsmall" className="text-ui-fg-subtle">Category</Text>
+                          <Badge size="small" color="blue">{formatLabel(analysis.category || 'Unknown')}</Badge>
+                        </div>
+                        <div className="w-full bg-ui-bg-subtle h-1 rounded-full overflow-hidden">
+                          <div className="h-full bg-ui-fg-interactive transition-all duration-1000" style={{ width: `${(analysis.category_confidence || 0) * 100}%` }} />
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <Text size="xsmall" className="text-ui-fg-subtle">Priority</Text>
+                        <Badge size="small" color={analysis.suggested_priority === 'high' ? 'red' : 'orange'}>{formatLabel(analysis.suggested_priority || 'Normal')}</Badge>
+                      </div>
+                    </div>
+                    <div className={`p-4 rounded-2xl border flex items-center justify-between ${analysis.auto_reply_eligible ? 'bg-green-50/30 border-green-100' : 'bg-ui-bg-subtle/10 border-ui-border-base'}`}>
+                      <Text size="xsmall" className="text-ui-fg-subtle">Automation</Text>
+                      {analysis.auto_reply_eligible ? (
+                        <div className="flex items-center gap-1.5 text-ui-fg-success"><CheckCircleSolid className="h-4 w-4" /><Text size="xsmall" weight="plus">Eligible</Text></div>
+                      ) : (
+                        <div className="flex items-center gap-1.5 text-ui-fg-muted"><XCircleSolid className="h-4 w-4" /><Text size="xsmall">Manual Only</Text></div>
+                      )}
+                    </div>
+                  </div>
+                ) : <Text size="xsmall" className="text-ui-fg-subtle italic">No AI insights available for this ticket.</Text>}
+              </div>
+
+              <div className="border-t pt-8">
+                <Text size="xsmall" weight="plus" className="text-ui-fg-subtle uppercase tracking-widest font-bold mb-4">Customer Info</Text>
+                <div className="space-y-4">
+                  <div className="flex flex-col">
+                    <Text size="small" weight="plus" className="truncate">{customerName || 'Loading...'}</Text>
+                    <Text size="xsmall" className="text-ui-fg-subtle truncate">{customerEmail || '...'}</Text>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4 pt-2">
                     <div>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <Text size="xsmall" className="text-ui-fg-subtle">Category</Text>
-                        <Badge size="small" color="blue">{formatLabel(analysis.category || 'Unknown')}</Badge>
-                      </div>
-                      <div className="w-full bg-ui-bg-subtle h-1 rounded-full overflow-hidden">
-                        <div className="h-full bg-ui-fg-interactive transition-all duration-1000" style={{ width: `${(analysis.category_confidence || 0) * 100}%` }} />
-                      </div>
+                      <Text size="xsmall" className="text-ui-fg-subtle mb-1">Assigned To</Text>
+                      <Input 
+                        className="h-8 text-xs bg-ui-bg-subtle border-none" 
+                        value={assignedToInput} 
+                        onChange={e => setAssignedToInput(e.target.value)} 
+                        onBlur={() => assignedToInput !== (selectedTicket.assigned_to ?? '') && updateTicket({ assigned_to: assignedToInput.trim() || null })}
+                        placeholder="Admin ID"
+                      />
                     </div>
-                    <div className="flex items-center justify-between">
-                      <Text size="xsmall" className="text-ui-fg-subtle">Priority</Text>
-                      <Badge size="small" color={analysis.suggested_priority === 'high' ? 'red' : 'orange'}>{formatLabel(analysis.suggested_priority || 'Normal')}</Badge>
+                    <div>
+                      <Text size="xsmall" className="text-ui-fg-subtle mb-1">Status</Text>
+                      <Badge size="small" color={statusColor(selectedTicket.status)}>{formatLabel(selectedTicket.status)}</Badge>
                     </div>
-                  </div>
-                  <div className={`p-4 rounded-2xl border flex items-center justify-between ${analysis.auto_reply_eligible ? 'bg-green-50/30 border-green-100' : 'bg-ui-bg-subtle/10 border-ui-border-base'}`}>
-                    <Text size="xsmall" className="text-ui-fg-subtle">Automation</Text>
-                    {analysis.auto_reply_eligible ? (
-                      <div className="flex items-center gap-1.5 text-ui-fg-success"><CheckCircleSolid className="h-4 w-4" /><Text size="xsmall" weight="plus">Eligible</Text></div>
-                    ) : (
-                      <div className="flex items-center gap-1.5 text-ui-fg-muted"><XCircleSolid className="h-4 w-4" /><Text size="xsmall">Manual Only</Text></div>
-                    )}
                   </div>
                 </div>
-              ) : <Text size="xsmall" className="text-ui-fg-subtle italic">No AI insights available for this ticket.</Text>}
-            </div>
+              </div>
 
-            <div className="border-t pt-8">
-              <Text size="xsmall" weight="plus" className="text-ui-fg-subtle uppercase tracking-widest font-bold mb-4">Customer Info</Text>
-              <div className="space-y-4">
-                <div className="flex flex-col">
-                  <Text size="small" weight="plus" className="truncate">{customerName || 'Loading...'}</Text>
-                  <Text size="xsmall" className="text-ui-fg-subtle truncate">{customerEmail || '...'}</Text>
+              <div className="border-t pt-8">
+                <div className="flex items-center justify-between mb-4">
+                  <Text size="xsmall" weight="plus" className="text-ui-fg-subtle uppercase tracking-widest font-bold">History</Text>
+                  <Badge size="2xsmall">{customerTickets.length} tickets</Badge>
                 </div>
-                <div className="grid grid-cols-2 gap-4 pt-2">
-                  <div>
-                    <Text size="xsmall" className="text-ui-fg-subtle mb-1">Assigned To</Text>
-                    <Input 
-                      className="h-8 text-xs bg-ui-bg-subtle border-none" 
-                      value={assignedToInput} 
-                      onChange={e => setAssignedToInput(e.target.value)} 
-                      onBlur={() => assignedToInput !== (selectedTicket.assigned_to ?? '') && updateTicket({ assigned_to: assignedToInput.trim() || null })}
-                      placeholder="Admin ID"
-                    />
-                  </div>
-                  <div>
-                    <Text size="xsmall" className="text-ui-fg-subtle mb-1">Status</Text>
-                    <Badge size="small" color={statusColor(selectedTicket.status)}>{formatLabel(selectedTicket.status)}</Badge>
-                  </div>
+                <div className="space-y-3">
+                  {customerTickets.filter(t => t.id !== selectedTicket.id).slice(0, 5).map(t => (
+                    <button key={t.id} onClick={() => { setSelectedTicketId(t.id); setMobileView('detail') }} className="w-full text-left p-3 rounded-xl border bg-ui-bg-subtle/20 hover:bg-ui-bg-subtle transition-all group">
+                      <Text size="xsmall" weight="plus" className="line-clamp-1 group-hover:text-ui-fg-base">{t.subject}</Text>
+                      <div className="flex items-center gap-2 mt-1 opacity-60">
+                        <Badge size="2xsmall" color={statusColor(t.status)}>{t.status}</Badge>
+                        <Text size="xsmall">{new Date(t.created_at).toLocaleDateString()}</Text>
+                      </div>
+                    </button>
+                  ))}
                 </div>
               </div>
             </div>
 
-            <div className="border-t pt-8">
-              <div className="flex items-center justify-between mb-4">
-                <Text size="xsmall" weight="plus" className="text-ui-fg-subtle uppercase tracking-widest font-bold">History</Text>
-                <Badge size="2xsmall">{customerTickets.length} tickets</Badge>
-              </div>
-              <div className="space-y-3">
-                {customerTickets.filter(t => t.id !== selectedTicket.id).slice(0, 5).map(t => (
-                  <button key={t.id} onClick={() => setSelectedTicketId(t.id)} className="w-full text-left p-3 rounded-xl border bg-ui-bg-subtle/20 hover:bg-ui-bg-subtle transition-all group">
-                    <Text size="xsmall" weight="plus" className="line-clamp-1 group-hover:text-ui-fg-base">{t.subject}</Text>
-                    <div className="flex items-center gap-2 mt-1 opacity-60">
-                      <Badge size="2xsmall" color={statusColor(t.status)}>{t.status}</Badge>
-                      <Text size="xsmall">{new Date(t.created_at).toLocaleDateString()}</Text>
+            {/* Mobile context overlay */}
+            {showContext && (
+              <div className="fixed inset-0 z-40 lg:hidden">
+                <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setShowContext(false)} />
+                <div className="absolute right-0 top-0 bottom-0 w-[320px] max-w-[85vw] bg-ui-bg-base shadow-2xl flex flex-col">
+                  <div className="flex items-center justify-between p-4 border-b sticky top-0 bg-ui-bg-base z-10">
+                    <Text size="small" weight="plus">Context Panel</Text>
+                    <button onClick={() => setShowContext(false)} className="p-1.5 rounded-lg hover:bg-ui-bg-subtle transition-colors">
+                      <XCircleSolid className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-6 space-y-8">
+                    <div>
+                      <Text size="xsmall" weight="plus" className="text-ui-fg-subtle uppercase tracking-widest font-bold mb-4">Intelligence</Text>
+                      {loadingAnalysis ? (
+                        <div className="flex items-center gap-2"><Spinner className="animate-spin h-3 w-3" /><Text size="xsmall">Analyzing...</Text></div>
+                      ) : analysis ? (
+                        <div className="space-y-6">
+                          <div className="p-4 rounded-2xl border bg-ui-bg-subtle/30 space-y-4">
+                            <div>
+                              <div className="flex items-center justify-between mb-1.5">
+                                <Text size="xsmall" className="text-ui-fg-subtle">Category</Text>
+                                <Badge size="small" color="blue">{formatLabel(analysis.category || 'Unknown')}</Badge>
+                              </div>
+                              <div className="w-full bg-ui-bg-subtle h-1 rounded-full overflow-hidden">
+                                <div className="h-full bg-ui-fg-interactive transition-all duration-1000" style={{ width: `${(analysis.category_confidence || 0) * 100}%` }} />
+                              </div>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <Text size="xsmall" className="text-ui-fg-subtle">Priority</Text>
+                              <Badge size="small" color={analysis.suggested_priority === 'high' ? 'red' : 'orange'}>{formatLabel(analysis.suggested_priority || 'Normal')}</Badge>
+                            </div>
+                          </div>
+                          <div className={`p-4 rounded-2xl border flex items-center justify-between ${analysis.auto_reply_eligible ? 'bg-green-50/30 border-green-100' : 'bg-ui-bg-subtle/10 border-ui-border-base'}`}>
+                            <Text size="xsmall" className="text-ui-fg-subtle">Automation</Text>
+                            {analysis.auto_reply_eligible ? (
+                              <div className="flex items-center gap-1.5 text-ui-fg-success"><CheckCircleSolid className="h-4 w-4" /><Text size="xsmall" weight="plus">Eligible</Text></div>
+                            ) : (
+                              <div className="flex items-center gap-1.5 text-ui-fg-muted"><XCircleSolid className="h-4 w-4" /><Text size="xsmall">Manual Only</Text></div>
+                            )}
+                          </div>
+                        </div>
+                      ) : <Text size="xsmall" className="text-ui-fg-subtle italic">No AI insights available for this ticket.</Text>}
                     </div>
-                  </button>
-                ))}
+
+                    <div className="border-t pt-8">
+                      <Text size="xsmall" weight="plus" className="text-ui-fg-subtle uppercase tracking-widest font-bold mb-4">Customer Info</Text>
+                      <div className="space-y-4">
+                        <div className="flex flex-col">
+                          <Text size="small" weight="plus" className="truncate">{customerName || 'Loading...'}</Text>
+                          <Text size="xsmall" className="text-ui-fg-subtle truncate">{customerEmail || '...'}</Text>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4 pt-2">
+                          <div>
+                            <Text size="xsmall" className="text-ui-fg-subtle mb-1">Assigned To</Text>
+                            <Input 
+                              className="h-8 text-xs bg-ui-bg-subtle border-none" 
+                              value={assignedToInput} 
+                              onChange={e => setAssignedToInput(e.target.value)} 
+                              onBlur={() => assignedToInput !== (selectedTicket.assigned_to ?? '') && updateTicket({ assigned_to: assignedToInput.trim() || null })}
+                              placeholder="Admin ID"
+                            />
+                          </div>
+                          <div>
+                            <Text size="xsmall" className="text-ui-fg-subtle mb-1">Status</Text>
+                            <Badge size="small" color={statusColor(selectedTicket.status)}>{formatLabel(selectedTicket.status)}</Badge>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="border-t pt-8">
+                      <div className="flex items-center justify-between mb-4">
+                        <Text size="xsmall" weight="plus" className="text-ui-fg-subtle uppercase tracking-widest font-bold">History</Text>
+                        <Badge size="2xsmall">{customerTickets.length} tickets</Badge>
+                      </div>
+                      <div className="space-y-3">
+                        {customerTickets.filter(t => t.id !== selectedTicket.id).slice(0, 5).map(t => (
+                          <button key={t.id} onClick={() => { setSelectedTicketId(t.id); setMobileView('detail'); setShowContext(false) }} className="w-full text-left p-3 rounded-xl border bg-ui-bg-subtle/20 hover:bg-ui-bg-subtle transition-all group">
+                            <Text size="xsmall" weight="plus" className="line-clamp-1 group-hover:text-ui-fg-base">{t.subject}</Text>
+                            <div className="flex items-center gap-2 mt-1 opacity-60">
+                              <Badge size="2xsmall" color={statusColor(t.status)}>{t.status}</Badge>
+                              <Text size="xsmall">{new Date(t.created_at).toLocaleDateString()}</Text>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
+            )}
+          </>
         )}
       </div>
 

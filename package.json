@@ -3,6 +3,14 @@
   "version": "0.0.1",
   "description": "Medusa v2 plugin for customer support tickets",
   "main": ".medusa/server/src/index.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/simowment/support-plugin.git"
+  },
+  "bugs": {
+    "url": "https://github.com/simowment/support-plugin/issues"
+  },
+  "homepage": "https://github.com/simowment/support-plugin#readme",
   "exports": {
     "./package.json": "./package.json",
     "./modules/*": "./.medusa/server/src/modules/*/index.js",
@@ -52,6 +60,7 @@
     "customer-support"
   ],
   "license": "MIT",
+  "author": "igottamakeit",
   "engines": {
     "node": ">=20"
   }

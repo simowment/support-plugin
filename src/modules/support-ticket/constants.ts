@@ -5,7 +5,6 @@ export const TicketStatus = {
   IN_PROGRESS: 'in_progress',
   WAITING_CUSTOMER: 'waiting_customer',
   WAITING_ADMIN: 'waiting_admin',
-  RESOLVED: 'resolved',
   CLOSED: 'closed',
 } as const
 

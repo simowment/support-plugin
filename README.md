@@ -1,22 +1,101 @@
 # Medusa Support Tickets Plugin
 
-A custom Medusa v2 plugin for handling customer support inquiries, returns, and fulfillment issues.
+Medusa v2 plugin for customer support tickets. It adds customer ticket submission, admin ticket management, ticket messages, internal notes, event history, file uploads, Discord notifications, and a custom Admin dashboard page.
 
-## Overview
-This plugin provides a dedicated ticketing system within the commerce platform, allowing customers to communicate with store administrators regarding their orders, and providing admins with the context they need to resolve issues efficiently.
+## Features
 
-## Planned Features
-- **Ticket Management**: Create, update, and resolve support tickets.
-- **Order Linking**: Tie tickets directly to specific orders, fulfillments, or customers.
-- **Messaging**: Bi-directional communication between staff and customers.
-- **AI Assistance**: Planned support for AI-drafted replies and issue classification.
-- **Event Tracking**: Audit trail of ticket status changes and escalations.
+- Customer-authenticated store routes for ticket creation and replies.
+- Admin-authenticated routes for ticket triage, status updates, replies, notes, merging, and bulk actions.
+- Ticket event history for auditability.
+- File upload validation for ticket attachments.
+- Optional Discord webhook notifications for new tickets and customer replies.
+- Server-sent events for real-time ticket updates.
+- Medusa Admin route at `/app/tickets`.
+- Mobile-friendly split-panel admin UI.
 
-## Usage in Backend
-This plugin is designed to be loaded via `medusa-config.ts` in the main backend application.
+## Installation
+
+```bash
+pnpm add @medusastore/medusa-plugin-support-tickets
+```
+
+## Configuration
+
+Register the plugin in `medusa-config.ts`.
+
+```ts
+{
+  resolve: '@medusastore/medusa-plugin-support-tickets',
+}
+```
+
+## Environment variables
+
+No environment variables are required.
+
+Optional:
+
+```env
+DISCORD_WEBHOOK_URL=
+```
+
+Set `DISCORD_WEBHOOK_URL` to receive Discord notifications when customers create tickets or reply.
+
+## Database
+
+Run migrations after installing the plugin.
+
+```bash
+npx medusa db:migrate
+```
+
+## API overview
+
+### Store routes
+
+- `GET /store/tickets`
+- `POST /store/tickets`
+- `GET /store/tickets/:id`
+- `POST /store/tickets/:id/messages`
+- `GET /store/tickets/:id/events`
+- `POST /store/tickets/upload`
+
+### Admin routes
+
+- `GET /admin/tickets`
+- `POST /admin/tickets`
+- `GET /admin/tickets/:id`
+- `POST /admin/tickets/:id`
+- `DELETE /admin/tickets/:id`
+- `POST /admin/tickets/:id/messages`
+- `POST /admin/tickets/:id/notes`
+- `POST /admin/tickets/:id/merge`
+- `POST /admin/tickets/bulk`
+- `GET /admin/tickets/events`
+- `GET /admin/tickets/notifications`
+- `POST /admin/tickets/upload`
+
+## Admin usage
+
+Open the Medusa Admin and go to **Tickets**. Staff can filter tickets, reply to customers, add internal notes, merge duplicates, assign ownership, inspect ticket history, and close tickets.
+
+## Project structure
+
+```text
+src/
+├── admin/       # Admin dashboard route
+├── api/         # Admin/store API routes and middleware
+├── modules/     # Support ticket module, models, migrations
+├── subscribers/ # Discord + SSE notifications
+└── workflows/   # Reserved for future workflow logic
+```
 
 ## Development
-- Ensure models (`ticket`, `ticket_message`, `ticket_event`) are properly linked without circular dependencies.
-- Any database changes require generating new migrations in the backend context.
 
-Refer to `ecomskill/ai_customer_support.md` for guidelines on AI-assisted support workflows and escalation policies.
+```bash
+pnpm build
+```
+
+## License
+
+MIT
