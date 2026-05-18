@@ -3,6 +3,7 @@
   "version": "0.0.1",
   "description": "Medusa v2 plugin for customer support tickets",
   "main": ".medusa/server/src/index.js",
+  "types": ".medusa/server/src/index.d.ts",
   "repository": {
     "type": "git",
     "url": "https://github.com/simowment/support-plugin.git"
@@ -24,6 +25,7 @@
     },
     "./*": "./.medusa/server/src/*.js",
     ".": {
+      "types": "./.medusa/server/src/index.d.ts",
       "import": "./.medusa/server/src/index.js",
       "require": "./.medusa/server/src/index.js",
       "default": "./.medusa/server/src/index.js"
@@ -35,6 +37,9 @@
   "scripts": {
     "build": "node ../node_modules/@medusajs/cli/cli.js plugin:build && tsc",
     "dev": "node ../node_modules/@medusajs/cli/cli.js plugin:develop",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx}\"",
     "watch": "tsc --watch --preserveWatchOutput",
     "prepublishOnly": "npm run build"
   },

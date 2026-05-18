@@ -1,5 +1,4 @@
-import { MedusaService } from '@medusajs/framework/utils'
-import { Modules } from '@medusajs/framework/utils'
+import { MedusaService, Modules } from '@medusajs/framework/utils'
 import { Ticket } from './models/ticket'
 import { TicketMessage } from './models/ticket-message'
 import { TicketEvent } from './models/ticket-event'
