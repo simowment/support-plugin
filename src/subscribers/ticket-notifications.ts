@@ -22,7 +22,9 @@ function buildDiscordFields(data: {
   sender_type?: string
 }) {
   const ticketId = data.ticket_id || data.id
-  const categoryLabel = data.category ? (TICKET_CATEGORY_LABELS[data.category] ?? data.category) : 'N/A'
+  const categoryLabel = data.category
+    ? (TICKET_CATEGORY_LABELS[data.category] ?? data.category)
+    : 'N/A'
 
   const fields = [
     { name: 'Ticket ID', value: ticketId, inline: true },
@@ -108,14 +110,22 @@ export default async function ticketNotificationHandler({
       break
 
     case TicketEventName.MESSAGE_ADDED:
-      ticketEventBus.emit({ ticketId, type: 'message_added', payload: { senderType: data.sender_type } })
+      ticketEventBus.emit({
+        ticketId,
+        type: 'message_added',
+        payload: { senderType: data.sender_type },
+      })
       if (data.sender_type === 'customer') {
         await sendDiscordWebhook(logger, name, data, '💬 New Customer Reply', 0xf59e0b)
       }
       break
 
     case TicketEventName.UPDATED:
-      ticketEventBus.emit({ ticketId, type: 'status_changed', payload: { status: (data as any).status } })
+      ticketEventBus.emit({
+        ticketId,
+        type: 'status_changed',
+        payload: { status: (data as any).status },
+      })
       break
 
     case TicketEventName.CLOSED:

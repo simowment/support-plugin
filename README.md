@@ -46,7 +46,7 @@ Set `DISCORD_WEBHOOK_URL` to receive Discord notifications when customers create
 Run migrations after installing the plugin.
 
 ```bash
-npx medusa db:migrate
+pnpm --dir backend medusa db:migrate
 ```
 
 ## API overview

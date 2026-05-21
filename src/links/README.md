@@ -7,14 +7,11 @@ Learn more about links in [this documentation](https://docs.medusajs.com/learn/f
 For example:
 
 ```ts
-import BlogModule from "../modules/blog"
-import ProductModule from "@medusajs/medusa/product"
-import { defineLink } from "@medusajs/framework/utils"
+import BlogModule from '../modules/blog'
+import ProductModule from '@medusajs/medusa/product'
+import { defineLink } from '@medusajs/framework/utils'
 
-export default defineLink(
-  ProductModule.linkable.product,
-  BlogModule.linkable.post
-)
+export default defineLink(ProductModule.linkable.product, BlogModule.linkable.post)
 ```
 
 This defines a link between the Product Module's `product` data model and the Blog Module (custom module)'s `post` data model.
@@ -22,5 +19,5 @@ This defines a link between the Product Module's `product` data model and the Bl
 Then, in the Medusa application using this plugin, run the following command to sync the links to the database:
 
 ```bash
-npx medusa db:migrate
+pnpm medusa db:migrate
 ```

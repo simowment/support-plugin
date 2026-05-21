@@ -20,7 +20,9 @@ function readTicketIds(value: unknown): string[] | null {
     return null
   }
 
-  const ids = value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+  const ids = value.filter(
+    (item): item is string => typeof item === 'string' && item.trim().length > 0,
+  )
   return ids.length === value.length ? ids : null
 }
 
@@ -36,7 +38,12 @@ export async function POST(req: MedusaRequest<BulkTicketBody>, res: MedusaRespon
   }
 
   if (ticketIds.length > MAX_BULK_TICKETS) {
-    return sendError(res, 400, 'TOO_MANY_TICKETS', `Bulk updates are limited to ${MAX_BULK_TICKETS} tickets`)
+    return sendError(
+      res,
+      400,
+      'TOO_MANY_TICKETS',
+      `Bulk updates are limited to ${MAX_BULK_TICKETS} tickets`,
+    )
   }
 
   if (body.status === undefined && body.assigned_to === undefined) {

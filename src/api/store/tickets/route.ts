@@ -1,5 +1,14 @@
 import { AuthenticatedMedusaRequest, MedusaResponse } from '@medusajs/framework/http'
-import { resolveTicketService, requireAuth, validateEnum, VALID_CATEGORIES, parsePagination, sanitize, sendError, MESSAGE_MAX_LENGTH } from '../../shared/helpers'
+import {
+  resolveTicketService,
+  requireAuth,
+  validateEnum,
+  VALID_CATEGORIES,
+  parsePagination,
+  sanitize,
+  sendError,
+  MESSAGE_MAX_LENGTH,
+} from '../../shared/helpers'
 import { TicketCategory } from '../../../modules/support-ticket'
 
 type CreateTicketBody = {
@@ -26,8 +35,20 @@ export async function POST(req: AuthenticatedMedusaRequest<CreateTicketBody>, re
 
   if (!cleanSubject) return sendError(res, 400, 'VALIDATION', 'Subject must contain text.')
   if (!cleanMessage) return sendError(res, 400, 'VALIDATION', 'Message must contain text.')
-  if (cleanSubject.length > SUBJECT_MAX_LENGTH) return sendError(res, 400, 'VALIDATION', `Subject must be under ${SUBJECT_MAX_LENGTH} characters.`)
-  if (cleanMessage.length > MESSAGE_MAX_LENGTH) return sendError(res, 400, 'VALIDATION', `Message must be under ${MESSAGE_MAX_LENGTH} characters.`)
+  if (cleanSubject.length > SUBJECT_MAX_LENGTH)
+    return sendError(
+      res,
+      400,
+      'VALIDATION',
+      `Subject must be under ${SUBJECT_MAX_LENGTH} characters.`,
+    )
+  if (cleanMessage.length > MESSAGE_MAX_LENGTH)
+    return sendError(
+      res,
+      400,
+      'VALIDATION',
+      `Message must be under ${MESSAGE_MAX_LENGTH} characters.`,
+    )
 
   const categoryError = validateEnum(category, VALID_CATEGORIES, 'category')
   if (!category || categoryError) {

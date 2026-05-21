@@ -1,5 +1,13 @@
 import { AuthenticatedMedusaRequest, MedusaResponse } from '@medusajs/framework/http'
-import { resolveTicketService, requireAuth, ticketNotFound, sanitize, sendError, type MessageBody, MESSAGE_MAX_LENGTH } from '../../../../shared/helpers'
+import {
+  resolveTicketService,
+  requireAuth,
+  ticketNotFound,
+  sanitize,
+  sendError,
+  type MessageBody,
+  MESSAGE_MAX_LENGTH,
+} from '../../../../shared/helpers'
 import { SenderType } from '../../../../../modules/support-ticket'
 
 export async function POST(req: AuthenticatedMedusaRequest<MessageBody>, res: MedusaResponse) {
@@ -13,7 +21,12 @@ export async function POST(req: AuthenticatedMedusaRequest<MessageBody>, res: Me
 
   const cleanMessage = message ? sanitize(message) : ''
   if (cleanMessage.length > MESSAGE_MAX_LENGTH) {
-    return sendError(res, 400, 'VALIDATION', `Message must be under ${MESSAGE_MAX_LENGTH} characters.`)
+    return sendError(
+      res,
+      400,
+      'VALIDATION',
+      `Message must be under ${MESSAGE_MAX_LENGTH} characters.`,
+    )
   }
 
   const service = resolveTicketService(req)

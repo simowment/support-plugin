@@ -137,9 +137,24 @@ export default class SupportTicketModuleService extends MedusaService({
 
     await this.emitAndPersistEvents(
       ticket.id,
-      [this.buildEvent(ticket.id, TicketEventType.TICKET_CREATED, { category: input.category }, SenderTypeValues.CUSTOMER, input.customerId)],
+      [
+        this.buildEvent(
+          ticket.id,
+          TicketEventType.TICKET_CREATED,
+          { category: input.category },
+          SenderTypeValues.CUSTOMER,
+          input.customerId,
+        ),
+      ],
       TicketEventName.CREATED,
-      { id: ticket.id, subject: input.subject, category: input.category, customer_id: input.customerId, order_id: input.orderId ?? null, message: input.message },
+      {
+        id: ticket.id,
+        subject: input.subject,
+        category: input.category,
+        customer_id: input.customerId,
+        order_id: input.orderId ?? null,
+        message: input.message,
+      },
     )
 
     return ticket as unknown as TicketRecord
@@ -167,13 +182,21 @@ export default class SupportTicketModuleService extends MedusaService({
     // 2. Reopen ticket if closed (non-critical — guarded)
     if (isClosed) {
       try {
-        await this.updateTickets([{ id: input.ticketId, status: TicketStatus.OPEN, closed_at: null }])
+        await this.updateTickets([
+          { id: input.ticketId, status: TicketStatus.OPEN, closed_at: null },
+        ])
       } catch {
         // Non-critical: ticket stays closed, message already persisted
       }
       try {
         await this.createTicketEvents([
-          this.buildEvent(input.ticketId, TicketEventType.TICKET_REOPENED, { reason: 'message_received', sender_type: input.senderType }, input.senderType, input.senderId),
+          this.buildEvent(
+            input.ticketId,
+            TicketEventType.TICKET_REOPENED,
+            { reason: 'message_received', sender_type: input.senderType },
+            input.senderType,
+            input.senderId,
+          ),
         ])
       } catch {
         // Non-critical: reopen event missing, audit trail gap is acceptable
@@ -183,7 +206,13 @@ export default class SupportTicketModuleService extends MedusaService({
     // 3. Create message event (non-critical — guarded)
     try {
       await this.createTicketEvents([
-        this.buildEvent(input.ticketId, TicketEventType.MESSAGE_ADDED, { sender_type: input.senderType }, input.senderType, input.senderId),
+        this.buildEvent(
+          input.ticketId,
+          TicketEventType.MESSAGE_ADDED,
+          { sender_type: input.senderType },
+          input.senderType,
+          input.senderId,
+        ),
       ])
     } catch {
       // Non-critical: event missing, message already persisted
@@ -193,7 +222,10 @@ export default class SupportTicketModuleService extends MedusaService({
     if (input.senderType !== SenderTypeValues.SYSTEM) {
       const effectiveStatus = isClosed ? TicketStatus.OPEN : currentTicket.status
       try {
-        if (input.senderType === SenderTypeValues.CUSTOMER && effectiveStatus !== TicketStatus.OPEN) {
+        if (
+          input.senderType === SenderTypeValues.CUSTOMER &&
+          effectiveStatus !== TicketStatus.OPEN
+        ) {
           await this.updateTickets([{ id: input.ticketId, status: TicketStatus.WAITING_ADMIN }])
         } else if (input.senderType === SenderTypeValues.ADMIN) {
           await this.updateTickets([{ id: input.ticketId, status: TicketStatus.WAITING_CUSTOMER }])
@@ -207,7 +239,13 @@ export default class SupportTicketModuleService extends MedusaService({
     try {
       await this.eventBusService_?.emit({
         name: TicketEventName.MESSAGE_ADDED,
-        data: { ticket_id: input.ticketId, message_id: (message as { id: string }).id, sender_type: input.senderType, sender_id: input.senderId ?? null, message: input.message },
+        data: {
+          ticket_id: input.ticketId,
+          message_id: (message as { id: string }).id,
+          sender_type: input.senderType,
+          sender_id: input.senderId ?? null,
+          message: input.message,
+        },
       })
     } catch {
       // Event bus is non-critical for SSE delivery
@@ -242,21 +280,56 @@ export default class SupportTicketModuleService extends MedusaService({
 
       if (isNowClosed) {
         updates.closed_at = new Date()
-        events.push(this.buildEvent(ticketId, TicketEventType.TICKET_CLOSED, { old_status: oldStatus }, performedByType, performedById))
+        events.push(
+          this.buildEvent(
+            ticketId,
+            TicketEventType.TICKET_CLOSED,
+            { old_status: oldStatus },
+            performedByType,
+            performedById,
+          ),
+        )
       } else if (wasClosed) {
-        events.push(this.buildEvent(ticketId, TicketEventType.TICKET_REOPENED, { old_status: oldStatus, new_status: input.status }, performedByType, performedById))
+        events.push(
+          this.buildEvent(
+            ticketId,
+            TicketEventType.TICKET_REOPENED,
+            { old_status: oldStatus, new_status: input.status },
+            performedByType,
+            performedById,
+          ),
+        )
       } else {
-        events.push(this.buildEvent(ticketId, TicketEventType.STATUS_CHANGED, { old_status: oldStatus, new_status: input.status }, performedByType, performedById))
+        events.push(
+          this.buildEvent(
+            ticketId,
+            TicketEventType.STATUS_CHANGED,
+            { old_status: oldStatus, new_status: input.status },
+            performedByType,
+            performedById,
+          ),
+        )
       }
     }
 
     if (input.assignedTo !== undefined && input.assignedTo !== currentTicket.assigned_to) {
       updates.assigned_to = input.assignedTo
-      events.push(this.buildEvent(ticketId, input.assignedTo ? TicketEventType.ASSIGNED : TicketEventType.UNASSIGNED, { old_assigned_to: currentTicket.assigned_to, new_assigned_to: input.assignedTo }, performedByType, performedById))
+      events.push(
+        this.buildEvent(
+          ticketId,
+          input.assignedTo ? TicketEventType.ASSIGNED : TicketEventType.UNASSIGNED,
+          { old_assigned_to: currentTicket.assigned_to, new_assigned_to: input.assignedTo },
+          performedByType,
+          performedById,
+        ),
+      )
     }
 
     const [updated] = await this.updateTickets([updates])
-    await this.emitAndPersistEvents(ticketId, events, TicketEventName.UPDATED, { id: ticketId, ...input })
+    await this.emitAndPersistEvents(ticketId, events, TicketEventName.UPDATED, {
+      id: ticketId,
+      ...input,
+    })
     return updated
   }
 
@@ -273,7 +346,11 @@ export default class SupportTicketModuleService extends MedusaService({
 
     await this.eventBusService_?.emit({
       name: TicketEventName.DELETED,
-      data: { id: ticketId, performed_by_type: performedByType ?? null, performed_by_id: performedById ?? null },
+      data: {
+        id: ticketId,
+        performed_by_type: performedByType ?? null,
+        performed_by_id: performedById ?? null,
+      },
     })
 
     return { id: ticketId }
@@ -309,7 +386,12 @@ export default class SupportTicketModuleService extends MedusaService({
 
   // ── Ticket merging ────────────────────────────────────────────────
 
-  async mergeTickets(sourceTicketId: string, targetTicketId: string, performedByType?: string, performedById?: string) {
+  async mergeTickets(
+    sourceTicketId: string,
+    targetTicketId: string,
+    performedByType?: string,
+    performedById?: string,
+  ) {
     if (sourceTicketId === targetTicketId) {
       throw new Error('Cannot merge a ticket with itself.')
     }
@@ -340,26 +422,51 @@ export default class SupportTicketModuleService extends MedusaService({
     }
 
     // Mark source closed and record merge in metadata
-    await this.updateTickets([{
-      id: sourceTicketId,
-      status: TicketStatus.CLOSED,
-      closed_at: new Date(),
-      metadata: { ...((source.metadata as Record<string, unknown>) ?? {}), merged_into: targetTicketId },
-    }])
+    await this.updateTickets([
+      {
+        id: sourceTicketId,
+        status: TicketStatus.CLOSED,
+        closed_at: new Date(),
+        metadata: {
+          ...((source.metadata as Record<string, unknown>) ?? {}),
+          merged_into: targetTicketId,
+        },
+      },
+    ])
 
     // Update target subject if needed (prepend note)
-    await this.updateTickets([{ id: targetTicketId, metadata: { ...((target.metadata as Record<string, unknown>) ?? {}), merged_from: sourceTicketId } }])
+    await this.updateTickets([
+      {
+        id: targetTicketId,
+        metadata: {
+          ...((target.metadata as Record<string, unknown>) ?? {}),
+          merged_from: sourceTicketId,
+        },
+      },
+    ])
 
     const events: TicketEventData[] = [
-      this.buildEvent(targetTicketId, TicketEventType.TICKET_MERGED, {
-        source_ticket_id: sourceTicketId,
-        source_subject: source.subject,
-        messages_moved: messages.length,
-        notes_moved: notes.length,
-      }, performedByType, performedById),
-      this.buildEvent(sourceTicketId, TicketEventType.TICKET_MERGED, {
-        merged_into: targetTicketId,
-      }, performedByType, performedById),
+      this.buildEvent(
+        targetTicketId,
+        TicketEventType.TICKET_MERGED,
+        {
+          source_ticket_id: sourceTicketId,
+          source_subject: source.subject,
+          messages_moved: messages.length,
+          notes_moved: notes.length,
+        },
+        performedByType,
+        performedById,
+      ),
+      this.buildEvent(
+        sourceTicketId,
+        TicketEventType.TICKET_MERGED,
+        {
+          merged_into: targetTicketId,
+        },
+        performedByType,
+        performedById,
+      ),
     ]
 
     await this.emitAndPersistEvents(targetTicketId, events, TicketEventName.MERGED, {
@@ -393,9 +500,12 @@ export default class SupportTicketModuleService extends MedusaService({
     // All non-closed tickets are candidates; we need the ones where
     // the latest message is from a customer. We do this by checking
     // the last event on each ticket.
-    const openTickets = await this.listTickets({
-      status: { $ne: TicketStatus.CLOSED },
-    }, { take: 1000 })
+    const openTickets = await this.listTickets(
+      {
+        status: { $ne: TicketStatus.CLOSED },
+      },
+      { take: 1000 },
+    )
 
     let count = 0
     for (const ticket of openTickets) {
@@ -406,7 +516,10 @@ export default class SupportTicketModuleService extends MedusaService({
       if (lastEvent.length > 0) {
         const last = lastEvent[0] as { event_type: string; performed_by_type: string | null }
         // Count if last meaningful event was a customer message
-        if (last.event_type === TicketEventType.MESSAGE_ADDED && last.performed_by_type === SenderTypeValues.CUSTOMER) {
+        if (
+          last.event_type === TicketEventType.MESSAGE_ADDED &&
+          last.performed_by_type === SenderTypeValues.CUSTOMER
+        ) {
           count++
         }
       }

@@ -17,7 +17,7 @@ To add translations, create JSON translation files for each language under the `
 Then, export the translations in `src/admin/i18n/index.ts`:
 
 ```ts
-import en from "./json/en.json" with { type: "json" }
+import en from './json/en.json' with { type: 'json' }
 
 export default {
   en: {
@@ -29,27 +29,27 @@ export default {
 Finally, use translations in your admin widgets and routes using the `useTranslation` hook:
 
 ```tsx
-import { defineWidgetConfig } from "@medusajs/admin-sdk"
-import { Button, Container, Heading } from "@medusajs/ui"
-import { useTranslation } from "react-i18next"
+import { defineWidgetConfig } from '@medusajs/admin-sdk'
+import { Button, Container, Heading } from '@medusajs/ui'
+import { useTranslation } from 'react-i18next'
 
 const ProductWidget = () => {
   const { t } = useTranslation()
   return (
     <Container className="p-0">
       <div className="flex items-center justify-between px-6 py-4">
-        <Heading level="h2">{t("brands.title")}</Heading>
-        <p>{t("brands.description")}</p>
+        <Heading level="h2">{t('brands.title')}</Heading>
+        <p>{t('brands.description')}</p>
       </div>
       <div className="flex justify-end px-6 py-4">
-        <Button variant="primary">{t("done")}</Button>
+        <Button variant="primary">{t('done')}</Button>
       </div>
     </Container>
   )
 }
 
 export const config = defineWidgetConfig({
-  zone: "product.details.before",
+  zone: 'product.details.before',
 })
 
 export default ProductWidget

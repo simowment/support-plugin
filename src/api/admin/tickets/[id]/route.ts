@@ -1,5 +1,11 @@
 import { MedusaRequest, MedusaResponse } from '@medusajs/framework/http'
-import { resolveTicketService, requireAdminAuth, validateEnum, VALID_STATUSES, ticketNotFound } from '../../../shared/helpers'
+import {
+  resolveTicketService,
+  requireAdminAuth,
+  validateEnum,
+  VALID_STATUSES,
+  ticketNotFound,
+} from '../../../shared/helpers'
 import { TicketStatus } from '../../../../modules/support-ticket'
 
 type UpdateTicketBody = {

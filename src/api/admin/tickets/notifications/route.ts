@@ -12,13 +12,19 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
     service.getUnreadCustomerReplyCount(),
     service.listTicketsWithCustomerReplies({ take: 100 }),
   ])
-  const recentTickets = tickets as Array<{ id: string; subject: string; status: string; customer_id: string; updated_at: string | Date }>
+  const recentTickets = tickets as Array<{
+    id: string
+    subject: string
+    status: string
+    customer_id: string
+    updated_at: string | Date
+  }>
 
   return res.json({
     success: true,
     recent_ticket_count: unreadCustomerReplyCount,
     total_open_tickets: tickets.length,
-    recent_tickets: recentTickets.map(t => ({
+    recent_tickets: recentTickets.map((t) => ({
       id: t.id,
       subject: t.subject,
       status: t.status,

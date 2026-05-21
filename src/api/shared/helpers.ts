@@ -9,7 +9,7 @@ export const DEFAULT_LIMIT = 50
 export const DEFAULT_OFFSET = 0
 
 // Upload limits
-export const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024       // 10MB
+export const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024 // 10MB
 export const MAX_FILES_PER_MESSAGE = 5
 export const MESSAGE_MAX_LENGTH = 10000
 export const ALLOWED_MIME_TYPES = new Set([
@@ -51,15 +51,18 @@ export function requireAdminAuth(req: MedusaRequest, res: MedusaResponse): strin
 
 export function parsePagination(req: MedusaRequest) {
   const rawLimit = parseInt(req.query['limit'] as string)
-  const limit = Number.isFinite(rawLimit) && rawLimit > 0 && rawLimit <= 100
-    ? rawLimit
-    : DEFAULT_LIMIT
+  const limit =
+    Number.isFinite(rawLimit) && rawLimit > 0 && rawLimit <= 100 ? rawLimit : DEFAULT_LIMIT
   const rawOffset = parseInt(req.query['offset'] as string)
   const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? rawOffset : DEFAULT_OFFSET
   return { take: limit, skip: offset }
 }
 
-export function validateEnum(value: string | undefined, validValues: Set<string>, label: string): string | null {
+export function validateEnum(
+  value: string | undefined,
+  validValues: Set<string>,
+  label: string,
+): string | null {
   if (value && !validValues.has(value)) {
     return `Invalid ${label}. Valid values: ${Array.from(validValues).join(', ')}`
   }
@@ -71,11 +74,11 @@ export function validateEnum(value: string | undefined, validValues: Set<string>
  */
 export function sanitize(input: string): string {
   return input
-    .replace(/&lt;/g, '<')             // decode entities first
+    .replace(/&lt;/g, '<') // decode entities first
     .replace(/&gt;/g, '>')
     .replace(/&amp;/g, '&')
     .replace(/&quot;/g, '"')
-    .replace(/<[^>]*>/g, '')          // then strip HTML tags
+    .replace(/<[^>]*>/g, '') // then strip HTML tags
     .trim()
 }
 
