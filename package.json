@@ -35,8 +35,8 @@
     ".medusa/server"
   ],
   "scripts": {
-    "build": "node ../node_modules/@medusajs/cli/cli.js plugin:build && tsc",
-    "dev": "node ../node_modules/@medusajs/cli/cli.js plugin:develop",
+    "build": "medusa plugin:build && tsc",
+    "dev": "medusa plugin:develop",
     "typecheck": "tsc --noEmit",
     "lint": "eslint \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx}\"",
@@ -44,6 +44,7 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
+    "@medusajs/core-flows": "^2.13.0",
     "@medusajs/framework": "^2.13.0",
     "@medusajs/medusa": "^2.13.0",
     "react": "^18.0.0",

@@ -1,5 +1,5 @@
 import { MedusaRequest, MedusaResponse } from '@medusajs/framework/http'
-import { resolveTicketService, requireAdminAuth, sendError } from '../../../../shared/helpers'
+import { resolveTicketService, requireAdminAuth, sendError, getErrorMessage } from '../../../../shared/helpers'
 
 type MergeBody = {
   source_ticket_id?: unknown
@@ -28,7 +28,7 @@ export async function POST(req: MedusaRequest<MergeBody>, res: MedusaResponse) {
     const result = await service.mergeTickets(sourceTicketId, targetTicketId, 'admin', adminId)
     return res.json({ success: true, ...result })
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Merge failed'
+    const message = getErrorMessage(error)
     return sendError(res, 400, 'MERGE_FAILED', message)
   }
 }

@@ -1,6 +1,7 @@
 import { SubscriberArgs, type SubscriberConfig } from '@medusajs/framework'
 import { TicketEventName } from '../modules/support-ticket'
 import { ticketEventBus } from '../api/shared/event-bus'
+import { getErrorMessage } from '../api/shared/helpers'
 
 const TICKET_CATEGORY_LABELS: Record<string, string> = {
   order_issue: 'Order Issue',
@@ -77,7 +78,7 @@ async function sendDiscordWebhook(
       body: JSON.stringify(payload),
     })
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = getErrorMessage(error)
     logger.warn(`[Support Tickets] Failed to send Discord notification: ${message}`)
   }
 }

@@ -1,6 +1,6 @@
 import { MedusaRequest, MedusaResponse } from '@medusajs/framework/http'
 import { MedusaError } from '@medusajs/framework/utils'
-import { uploadFilesWorkflow } from '@medusajs/medusa/core-flows'
+import { uploadFilesWorkflow } from '@medusajs/core-flows'
 import { MAX_FILE_SIZE_BYTES, MAX_FILES_PER_MESSAGE, ALLOWED_MIME_TYPES } from './helpers'
 
 type AttachmentResult = {

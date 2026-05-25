@@ -104,6 +104,11 @@ export function ticketNotFound(res: MedusaResponse) {
   return sendError(res, 404, 'TICKET_NOT_FOUND', 'Ticket not found')
 }
 
+export function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  return String(error)
+}
+
 export type MessageBody = {
   message?: string
   attachments?: Record<string, unknown>[]
