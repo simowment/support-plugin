@@ -1,4 +1,5 @@
 import { MedusaService, Modules } from '@medusajs/framework/utils'
+import type { Logger } from '@medusajs/framework/types'
 import { Ticket } from './models/ticket'
 import { TicketMessage } from './models/ticket-message'
 import { TicketEvent } from './models/ticket-event'
@@ -53,6 +54,9 @@ type PaginationParams = {
   skip?: number
 }
 
+const UNREAD_REPLY_TICKET_LIMIT = 1000
+const UNREAD_REPLY_EVENT_LIMIT = 5000
+
 type TicketEventData = {
   ticket: string
   event_type: string
@@ -68,10 +72,12 @@ export default class SupportTicketModuleService extends MedusaService({
   TicketNote,
 }) {
   protected eventBusService_: any
+  private logger_: Logger
 
-  constructor(container: Record<string, unknown>) {
+  constructor(container: Record<string, unknown> & { logger?: Logger }) {
     super(...arguments)
     this.eventBusService_ = container[Modules.EVENT_BUS]
+    this.logger_ = container.logger ?? (console as unknown as Logger)
   }
 
   // ── Private helpers ──────────────────────────────────────────────
@@ -109,6 +115,11 @@ export default class SupportTicketModuleService extends MedusaService({
     if (eventName && this.eventBusService_) {
       await this.eventBusService_.emit({ name: eventName, data: eventBusData ?? { id: ticketId } })
     }
+  }
+
+  private warnAddMessageSideEffect(action: string, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error)
+    this.logger_.warn(`[Support Tickets] addMessage ${action} failed: ${message}`)
   }
 
   // ── Ticket CRUD ──────────────────────────────────────────────────
@@ -185,8 +196,8 @@ export default class SupportTicketModuleService extends MedusaService({
         await this.updateTickets([
           { id: input.ticketId, status: TicketStatus.OPEN, closed_at: null },
         ])
-      } catch {
-        // Non-critical: ticket stays closed, message already persisted
+      } catch (error) {
+        this.warnAddMessageSideEffect('reopen ticket update', error)
       }
       try {
         await this.createTicketEvents([
@@ -198,8 +209,8 @@ export default class SupportTicketModuleService extends MedusaService({
             input.senderId,
           ),
         ])
-      } catch {
-        // Non-critical: reopen event missing, audit trail gap is acceptable
+      } catch (error) {
+        this.warnAddMessageSideEffect('reopen event creation', error)
       }
     }
 
@@ -214,8 +225,8 @@ export default class SupportTicketModuleService extends MedusaService({
           input.senderId,
         ),
       ])
-    } catch {
-      // Non-critical: event missing, message already persisted
+    } catch (error) {
+      this.warnAddMessageSideEffect('message event creation', error)
     }
 
     // 4. Update status (non-critical — guarded)
@@ -230,8 +241,8 @@ export default class SupportTicketModuleService extends MedusaService({
         } else if (input.senderType === SenderTypeValues.ADMIN) {
           await this.updateTickets([{ id: input.ticketId, status: TicketStatus.WAITING_CUSTOMER }])
         }
-      } catch {
-        // Non-critical: status update failed, ticket state is still valid
+      } catch (error) {
+        this.warnAddMessageSideEffect('status update', error)
       }
     }
 
@@ -247,8 +258,8 @@ export default class SupportTicketModuleService extends MedusaService({
           message: input.message,
         },
       })
-    } catch {
-      // Event bus is non-critical for SSE delivery
+    } catch (error) {
+      this.warnAddMessageSideEffect('event bus emit', error)
     }
 
     return message
@@ -497,33 +508,38 @@ export default class SupportTicketModuleService extends MedusaService({
    * These represent tickets needing admin attention.
    */
   async getUnreadCustomerReplyCount(): Promise<number> {
-    // All non-closed tickets are candidates; we need the ones where
-    // the latest message is from a customer. We do this by checking
-    // the last event on each ticket.
     const openTickets = await this.listTickets(
       {
         status: { $ne: TicketStatus.CLOSED },
       },
-      { take: 1000 },
+      { take: UNREAD_REPLY_TICKET_LIMIT },
     )
 
-    let count = 0
-    for (const ticket of openTickets) {
-      const lastEvent = await this.listTicketEvents(
-        { ticket: (ticket as { id: string }).id },
-        { order: { created_at: 'DESC' }, take: 1 },
-      )
-      if (lastEvent.length > 0) {
-        const last = lastEvent[0] as { event_type: string; performed_by_type: string | null }
-        // Count if last meaningful event was a customer message
-        if (
-          last.event_type === TicketEventType.MESSAGE_ADDED &&
-          last.performed_by_type === SenderTypeValues.CUSTOMER
-        ) {
-          count++
-        }
+    const ticketIds = openTickets.map((ticket) => (ticket as { id: string }).id)
+    if (ticketIds.length === 0) {
+      return 0
+    }
+
+    const messageEvents = await this.listTicketEvents(
+      { ticket: ticketIds, event_type: TicketEventType.MESSAGE_ADDED },
+      { order: { created_at: 'DESC' }, take: UNREAD_REPLY_EVENT_LIMIT },
+    )
+
+    const latestSenderByTicket = new Map<string, string | null>()
+    for (const event of messageEvents as Array<{
+      ticket_id: string
+      performed_by_type: string | null
+    }>) {
+      if (!latestSenderByTicket.has(event.ticket_id)) {
+        latestSenderByTicket.set(event.ticket_id, event.performed_by_type)
       }
     }
+
+    let count = 0
+    for (const senderType of latestSenderByTicket.values()) {
+      if (senderType === SenderTypeValues.CUSTOMER) count++
+    }
+
     return count
   }
 
