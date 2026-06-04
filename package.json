@@ -40,8 +40,12 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx}\"",
-    "watch": "tsc --watch --preserveWatchOutput",
-    "prepublishOnly": "npm run build"
+    "watch": "tsc --watch --preserveWatchOutput"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^3.0.61",
+    "ai": "^6.0.175",
+    "zod": "^3.24.0"
   },
   "peerDependencies": {
     "@medusajs/core-flows": "^2.13.0",
