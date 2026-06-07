@@ -8,7 +8,6 @@ import {
   Trash,
   User,
   XCircleSolid,
-  CheckCircleSolid,
   ChevronLeft,
   ChevronRight,
 } from '@medusajs/icons'
@@ -27,8 +26,14 @@ import {
 } from '@medusajs/ui'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { adminFetch } from '../../lib/api'
+import type { AIAnalysis } from './lib/ai'
+import { formatLabel } from './lib/format'
+import { AiAssistantTab } from './components/AiAssistantTab'
+import { AiSettingsDrawer } from './components/AiSettingsDrawer'
+import { ContextPanel } from './components/ContextPanel'
+import { IntelligencePanel } from './components/IntelligencePanel'
 
-type Ticket = {
+export type Ticket = {
   id: string
   subject: string
   category: string
@@ -82,19 +87,6 @@ type TicketDetails = {
   notes: TicketNote[]
 }
 
-type AIAnalysis = {
-  id: string
-  ticket_id: string
-  category: string | null
-  category_confidence: number | null
-  suggested_priority: string | null
-  priority_confidence: number | null
-  auto_reply_eligible: boolean
-  auto_replied: boolean
-  suggested_response: string | null
-  response_confidence: number | null
-}
-
 const STATUS_OPTIONS = [
   'open',
   'in_progress',
@@ -120,11 +112,8 @@ const CANNED_RESPONSES = [
   { label: 'Refund processing', value: 'Your refund request is being reviewed. Once approved, refunds usually appear on the original payment method within a few business days.' },
 ]
 
-const formatLabel = (value: string) =>
-  value
-    .split('_')
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ')
+const TICKETS_POLL_MS = 15_000
+const DETAILS_POLL_MS = 5_000
 
 const formatDate = (value?: string | null) => {
   if (!value) return 'N/A'
@@ -186,9 +175,21 @@ export default function SupportTicketsPage() {
   const [addingNote, setAddingNote] = useState(false)
   const [showMergeModal, setShowMergeModal] = useState(false)
   const [mergeSourceId, setMergeSourceId] = useState('')
-  const [activeTab, setActiveTab] = useState<'conversation' | 'notes' | 'events'>('conversation')
+  const [activeTab, setActiveTab] = useState<'conversation' | 'notes' | 'events' | 'ai'>('conversation')
   const [mobileView, setMobileView] = useState<'list' | 'detail'>('list')
   const [showContext, setShowContext] = useState(false)
+  const [showAiSettings, setShowAiSettings] = useState(false)
+
+  const handleTabChange = (value: string) => {
+    if (
+      value === 'conversation' ||
+      value === 'notes' ||
+      value === 'events' ||
+      value === 'ai'
+    ) {
+      setActiveTab(value)
+    }
+  }
 
   const selectedTicket = details?.ticket ?? tickets.find((ticket) => ticket.id === selectedTicketId)
 
@@ -221,6 +222,7 @@ export default function SupportTicketsPage() {
         setSelectedTicketId(data.tickets[0].id)
       }
     } catch (error) {
+      console.error('[tickets] fetchTickets failed', error)
       toast.error('Failed to load tickets')
     } finally {
       setLoadingTickets(false)
@@ -232,7 +234,9 @@ export default function SupportTicketsPage() {
     try {
       const data = await adminFetch<{ analysis: AIAnalysis }>(`/admin/tickets/${ticketId}/ai`)
       setAnalysis(data.analysis)
-    } catch {
+    } catch (error) {
+      console.error(`[tickets] fetchAnalysis failed for ${ticketId}`, error)
+      toast.error('Failed to load AI analysis')
       setAnalysis(null)
     } finally {
       setLoadingAnalysis(false)
@@ -244,7 +248,8 @@ export default function SupportTicketsPage() {
     try {
       const data = await adminFetch<TicketDetails>(`/admin/tickets/${ticketId}`)
       setDetails(data)
-    } catch {
+    } catch (error) {
+      console.error(`[tickets] fetchDetails failed for ${ticketId}`, error)
       toast.error('Failed to load ticket details')
       setDetails(null)
     } finally {
@@ -262,7 +267,8 @@ export default function SupportTicketsPage() {
         setCustomerName([customer.first_name, customer.last_name].filter(Boolean).join(' ') || customerId)
         setCustomerEmail(customer.email ?? null)
       }
-    } catch {
+    } catch (error) {
+      console.error(`[tickets] fetchCustomer failed for ${customerId}`, error)
       setCustomerName(null)
       setCustomerEmail(null)
     }
@@ -274,7 +280,8 @@ export default function SupportTicketsPage() {
         `/admin/tickets?customer_id=${encodeURIComponent(customerId)}&limit=10`,
       )
       setCustomerTickets(data.tickets ?? [])
-    } catch {
+    } catch (error) {
+      console.error(`[tickets] fetchCustomerTickets failed for ${customerId}`, error)
       setCustomerTickets([])
     }
   }, [])
@@ -290,7 +297,8 @@ export default function SupportTicketsPage() {
       setTickets(prev => prev.map(t => t.id === selectedTicketId ? { ...t, ...updated.ticket } : t))
       setDetails(prev => prev ? { ...prev, ticket: { ...prev.ticket, ...updated.ticket } } : prev)
       toast.success('Ticket updated')
-    } catch {
+    } catch (error) {
+      console.error(`[tickets] updateTicket failed for ${selectedTicketId}`, error)
       toast.error('Failed to update ticket')
     } finally {
       setSaving(false)
@@ -316,7 +324,8 @@ export default function SupportTicketsPage() {
       setPendingAttachments([])
       toast.success('Reply sent')
       await fetchDetails(selectedTicketId)
-    } catch {
+    } catch (error) {
+      console.error(`[tickets] sendReply failed for ${selectedTicketId}`, error)
       toast.error('Failed to send reply')
     } finally {
       setSaving(false)
@@ -334,7 +343,8 @@ export default function SupportTicketsPage() {
       setNoteContent('')
       toast.success('Note added')
       await fetchDetails(selectedTicketId)
-    } catch {
+    } catch (error) {
+      console.error(`[tickets] addNote failed for ${selectedTicketId}`, error)
       toast.error('Failed to add note')
     } finally {
       setAddingNote(false)
@@ -350,9 +360,10 @@ export default function SupportTicketsPage() {
       const result = await adminFetch<{ attachments: Attachment[] }>('/admin/tickets/upload', {
         method: 'POST',
         body: formData,
-      } as any)
+      })
       setPendingAttachments((prev) => [...prev, ...result.attachments])
-    } catch {
+    } catch (error) {
+      console.error('[tickets] uploadFiles failed', error)
       toast.error('File upload failed')
     } finally {
       setUploadingFiles(false)
@@ -369,7 +380,8 @@ export default function SupportTicketsPage() {
       })
       toast.success('Ticket merged')
       await Promise.all([fetchDetails(selectedTicketId), fetchTickets()])
-    } catch {
+    } catch (error) {
+      console.error(`[tickets] mergeTicket failed for ${selectedTicketId}`, error)
       toast.error('Failed to merge ticket')
     } finally {
       setSaving(false)
@@ -395,6 +407,7 @@ export default function SupportTicketsPage() {
       setCustomerTickets([])
       toast.success('Ticket deleted')
     } catch (error) {
+      console.error(`[tickets] deleteTicket failed for ${selectedTicketId}`, error)
       toast.error('Failed to delete ticket', {
         description: error instanceof Error ? error.message : 'Unknown error',
       })
@@ -404,25 +417,55 @@ export default function SupportTicketsPage() {
   }
 
   useEffect(() => {
-    fetchTickets()
-    const interval = setInterval(fetchTickets, 15_000)
-    return () => clearInterval(interval)
+    let cancelled = false
+    let timeoutId: ReturnType<typeof setTimeout> | null = null
+
+    const poll = async () => {
+      if (cancelled) return
+      await fetchTickets()
+      if (cancelled) return
+      timeoutId = setTimeout(poll, TICKETS_POLL_MS)
+    }
+
+    void poll()
+
+    return () => {
+      cancelled = true
+      if (timeoutId) clearTimeout(timeoutId)
+    }
   }, [fetchTickets])
 
   useEffect(() => {
-    if (selectedTicketId) {
-      fetchDetails(selectedTicketId)
-      fetchAnalysis(selectedTicketId)
-      const interval = setInterval(() => fetchDetails(selectedTicketId), 5_000)
-      return () => clearInterval(interval)
+    if (!selectedTicketId) return
+    let cancelled = false
+    let timeoutId: ReturnType<typeof setTimeout> | null = null
+
+    const poll = async () => {
+      if (cancelled) return
+      await Promise.all([fetchDetails(selectedTicketId), fetchAnalysis(selectedTicketId)])
+      if (cancelled) return
+      timeoutId = setTimeout(poll, DETAILS_POLL_MS)
+    }
+
+    void poll()
+
+    return () => {
+      cancelled = true
+      if (timeoutId) clearTimeout(timeoutId)
     }
   }, [selectedTicketId, fetchDetails, fetchAnalysis])
 
   useEffect(() => {
-    if (selectedTicket?.customer_id) {
-      fetchCustomer(selectedTicket.customer_id)
-      fetchCustomerTickets(selectedTicket.customer_id)
-      setAssignedToInput(selectedTicket.assigned_to ?? '')
+    const customerId = selectedTicket?.customer_id
+    if (!customerId) return
+    let cancelled = false
+    void (async () => {
+      await Promise.all([fetchCustomer(customerId), fetchCustomerTickets(customerId)])
+      if (cancelled) return
+      setAssignedToInput(selectedTicket?.assigned_to ?? '')
+    })()
+    return () => {
+      cancelled = true
     }
   }, [selectedTicket?.customer_id, selectedTicket?.assigned_to, fetchCustomer, fetchCustomerTickets])
 
@@ -510,8 +553,19 @@ export default function SupportTicketsPage() {
                 {filteredTickets.map((ticket) => (
                   <div
                     key={ticket.id}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Open ticket ${ticket.subject}`}
+                    aria-pressed={ticket.id === selectedTicketId}
                     onClick={() => { setSelectedTicketId(ticket.id); setMobileView('detail') }}
-                    className={`p-4 lg:p-5 cursor-pointer transition-all duration-200 hover:bg-ui-bg-subtle group border-l-4 ${
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        setSelectedTicketId(ticket.id)
+                        setMobileView('detail')
+                      }
+                    }}
+                    className={`p-4 lg:p-5 cursor-pointer transition-all duration-200 hover:bg-ui-bg-subtle group border-l-4 focus:outline-none focus:ring-2 focus:ring-ui-fg-interactive focus:ring-inset ${
                       ticket.id === selectedTicketId 
                         ? 'bg-ui-bg-subtle-pressed border-l-ui-fg-interactive shadow-inner' 
                         : 'border-l-transparent'
@@ -550,6 +604,13 @@ export default function SupportTicketsPage() {
               </div>
               <Heading level="h2" className="text-2xl mb-2">Support Workspace</Heading>
               <Text className="text-ui-fg-subtle">Select a conversation to start helping customers.</Text>
+              <button
+                type="button"
+                onClick={() => setShowAiSettings(true)}
+                className="mt-6 inline-flex items-center gap-2 text-xs font-medium text-ui-fg-interactive hover:text-ui-fg-interactive-hover focus:outline-none focus:ring-2 focus:ring-ui-fg-interactive focus:ring-offset-2 rounded px-3 py-2"
+              >
+                <Sparkles className="h-3.5 w-3.5" /> Configure AI Assistant
+              </button>
             </div>
           ) : (
             <>
@@ -588,11 +649,12 @@ export default function SupportTicketsPage() {
               {/* Tabs & Content */}
               <div className="flex-1 flex flex-col min-h-0">
                 <div className="px-4 lg:px-8 pt-4 lg:pt-6">
-                  <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
+                  <Tabs value={activeTab} onValueChange={handleTabChange}>
                     <Tabs.List className="w-fit">
                       <Tabs.Trigger value="conversation">Conversation</Tabs.Trigger>
                       <Tabs.Trigger value="notes">Notes ({details?.notes.length || 0})</Tabs.Trigger>
                       <Tabs.Trigger value="events">Activity Log</Tabs.Trigger>
+                      <Tabs.Trigger value="ai">AI Assistant</Tabs.Trigger>
                     </Tabs.List>
                   </Tabs>
                 </div>
@@ -616,8 +678,8 @@ export default function SupportTicketsPage() {
                                 if (attachments.length === 0) return null
                                 return (
                                   <div className="mt-4 pt-3 border-t border-current/10 flex flex-wrap gap-2">
-                                    {attachments.map((a, i) => (
-                                      <a key={i} href={getAttachmentUrl(a)} target="_blank" rel="noreferrer" 
+                                    {attachments.map((a) => (
+                                      <a key={a.url || a.filename} href={getAttachmentUrl(a)} target="_blank" rel="noreferrer"
                                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors ${
                                            msg.sender_type === 'customer' ? 'bg-ui-bg-subtle hover:bg-ui-bg-subtle-pressed' : 'bg-white/10 hover:bg-white/20'
                                          }`}>
@@ -682,6 +744,28 @@ export default function SupportTicketsPage() {
                       </div>
                     </div>
                   )}
+
+                  {activeTab === 'ai' && selectedTicketId && (
+                    <AiAssistantTab
+                      ticketId={selectedTicketId}
+                      analysis={analysis}
+                      loadingAnalysis={loadingAnalysis}
+                      messages={details?.messages ?? []}
+                      onOpenSettings={() => setShowAiSettings(true)}
+                      onApplySuggestion={(text) => {
+                        setReply(text)
+                        setActiveTab('conversation')
+                      }}
+                      onSuggestionGenerated={(suggested, confidence) => {
+                        setAnalysis((prev) =>
+                          prev
+                            ? { ...prev, suggested_response: suggested, response_confidence: confidence }
+                            : prev,
+                        )
+                      }}
+                      onRetryAnalysis={() => fetchAnalysis(selectedTicketId)}
+                    />
+                  )}
                 </div>
 
                 {/* Reply Footer */}
@@ -738,9 +822,16 @@ export default function SupportTicketsPage() {
                       {pendingAttachments.length > 0 && (
                         <div className="flex flex-wrap gap-2 pt-2">
                           {pendingAttachments.map((a, i) => (
-                            <Badge key={i} size="small" className="pr-1 gap-1.5">
+                            <Badge key={a.url || a.filename || String(i)} size="small" className="pr-1 gap-1.5">
                               {a.filename}
-                              <button onClick={() => setPendingAttachments(p => p.filter((_, idx) => idx !== i))} className="hover:text-ui-fg-base text-ui-fg-subtle">×</button>
+                              <button
+                                type="button"
+                                aria-label={`Remove attachment ${a.filename}`}
+                                onClick={() => setPendingAttachments(p => p.filter((_, idx) => idx !== i))}
+                                className="hover:text-ui-fg-base text-ui-fg-subtle"
+                              >
+                                ×
+                              </button>
                             </Badge>
                           ))}
                         </div>
@@ -789,82 +880,21 @@ export default function SupportTicketsPage() {
 
             {/* Desktop context sidebar */}
             <div className="hidden lg:flex w-[320px] border-l bg-ui-bg-base flex-col p-8 space-y-8 overflow-y-auto custom-scrollbar animate-in slide-in-from-right-4 duration-500">
-              <div>
-                <Text size="xsmall" weight="plus" className="text-ui-fg-subtle uppercase tracking-widest font-bold mb-4">Intelligence</Text>
-                {loadingAnalysis ? (
-                  <div className="flex items-center gap-2"><Spinner className="animate-spin h-3 w-3" /><Text size="xsmall">Analyzing...</Text></div>
-                ) : analysis ? (
-                  <div className="space-y-6">
-                    <div className="p-4 rounded-2xl border bg-ui-bg-subtle/30 space-y-4">
-                      <div>
-                        <div className="flex items-center justify-between mb-1.5">
-                          <Text size="xsmall" className="text-ui-fg-subtle">Category</Text>
-                          <Badge size="small" color="blue">{formatLabel(analysis.category || 'Unknown')}</Badge>
-                        </div>
-                        <div className="w-full bg-ui-bg-subtle h-1 rounded-full overflow-hidden">
-                          <div className="h-full bg-ui-fg-interactive transition-all duration-1000" style={{ width: `${(analysis.category_confidence || 0) * 100}%` }} />
-                        </div>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <Text size="xsmall" className="text-ui-fg-subtle">Priority</Text>
-                        <Badge size="small" color={analysis.suggested_priority === 'high' ? 'red' : 'orange'}>{formatLabel(analysis.suggested_priority || 'Normal')}</Badge>
-                      </div>
-                    </div>
-                    <div className={`p-4 rounded-2xl border flex items-center justify-between ${analysis.auto_reply_eligible ? 'bg-green-50/30 border-green-100' : 'bg-ui-bg-subtle/10 border-ui-border-base'}`}>
-                      <Text size="xsmall" className="text-ui-fg-subtle">Automation</Text>
-                      {analysis.auto_reply_eligible ? (
-                        <div className="flex items-center gap-1.5 text-ui-fg-success"><CheckCircleSolid className="h-4 w-4" /><Text size="xsmall" weight="plus">Eligible</Text></div>
-                      ) : (
-                        <div className="flex items-center gap-1.5 text-ui-fg-muted"><XCircleSolid className="h-4 w-4" /><Text size="xsmall">Manual Only</Text></div>
-                      )}
-                    </div>
-                  </div>
-                ) : <Text size="xsmall" className="text-ui-fg-subtle italic">No AI insights available for this ticket.</Text>}
-              </div>
-
-              <div className="border-t pt-8">
-                <Text size="xsmall" weight="plus" className="text-ui-fg-subtle uppercase tracking-widest font-bold mb-4">Customer Info</Text>
-                <div className="space-y-4">
-                  <div className="flex flex-col">
-                    <Text size="small" weight="plus" className="truncate">{customerName || 'Loading...'}</Text>
-                    <Text size="xsmall" className="text-ui-fg-subtle truncate">{customerEmail || '...'}</Text>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4 pt-2">
-                    <div>
-                      <Text size="xsmall" className="text-ui-fg-subtle mb-1">Assigned To</Text>
-                      <Input 
-                        className="h-8 text-xs bg-ui-bg-subtle border-none" 
-                        value={assignedToInput} 
-                        onChange={e => setAssignedToInput(e.target.value)} 
-                        onBlur={() => assignedToInput !== (selectedTicket.assigned_to ?? '') && updateTicket({ assigned_to: assignedToInput.trim() || null })}
-                        placeholder="Admin ID"
-                      />
-                    </div>
-                    <div>
-                      <Text size="xsmall" className="text-ui-fg-subtle mb-1">Status</Text>
-                      <Badge size="small" color={statusColor(selectedTicket.status)}>{formatLabel(selectedTicket.status)}</Badge>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="border-t pt-8">
-                <div className="flex items-center justify-between mb-4">
-                  <Text size="xsmall" weight="plus" className="text-ui-fg-subtle uppercase tracking-widest font-bold">History</Text>
-                  <Badge size="2xsmall">{customerTickets.length} tickets</Badge>
-                </div>
-                <div className="space-y-3">
-                  {customerTickets.filter(t => t.id !== selectedTicket.id).slice(0, 5).map(t => (
-                    <button key={t.id} onClick={() => { setSelectedTicketId(t.id); setMobileView('detail') }} className="w-full text-left p-3 rounded-xl border bg-ui-bg-subtle/20 hover:bg-ui-bg-subtle transition-all group">
-                      <Text size="xsmall" weight="plus" className="line-clamp-1 group-hover:text-ui-fg-base">{t.subject}</Text>
-                      <div className="flex items-center gap-2 mt-1 opacity-60">
-                        <Badge size="2xsmall" color={statusColor(t.status)}>{t.status}</Badge>
-                        <Text size="xsmall">{new Date(t.created_at).toLocaleDateString()}</Text>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <ContextPanel
+                selectedTicket={selectedTicket}
+                customerName={customerName}
+                customerEmail={customerEmail}
+                customerTickets={customerTickets}
+                assignedToInput={assignedToInput}
+                setAssignedToInput={setAssignedToInput}
+                updateTicket={updateTicket}
+                analysis={analysis}
+                loadingAnalysis={loadingAnalysis}
+                activeTab={activeTab}
+                onConfigureAi={() => setShowAiSettings(true)}
+                onSelectTicket={(id) => { setSelectedTicketId(id); setMobileView('detail') }}
+                statusColor={statusColor}
+              />
             </div>
 
             {/* Mobile context overlay */}
@@ -879,82 +909,25 @@ export default function SupportTicketsPage() {
                     </button>
                   </div>
                   <div className="flex-1 overflow-y-auto p-6 space-y-8">
-                    <div>
-                      <Text size="xsmall" weight="plus" className="text-ui-fg-subtle uppercase tracking-widest font-bold mb-4">Intelligence</Text>
-                      {loadingAnalysis ? (
-                        <div className="flex items-center gap-2"><Spinner className="animate-spin h-3 w-3" /><Text size="xsmall">Analyzing...</Text></div>
-                      ) : analysis ? (
-                        <div className="space-y-6">
-                          <div className="p-4 rounded-2xl border bg-ui-bg-subtle/30 space-y-4">
-                            <div>
-                              <div className="flex items-center justify-between mb-1.5">
-                                <Text size="xsmall" className="text-ui-fg-subtle">Category</Text>
-                                <Badge size="small" color="blue">{formatLabel(analysis.category || 'Unknown')}</Badge>
-                              </div>
-                              <div className="w-full bg-ui-bg-subtle h-1 rounded-full overflow-hidden">
-                                <div className="h-full bg-ui-fg-interactive transition-all duration-1000" style={{ width: `${(analysis.category_confidence || 0) * 100}%` }} />
-                              </div>
-                            </div>
-                            <div className="flex items-center justify-between">
-                              <Text size="xsmall" className="text-ui-fg-subtle">Priority</Text>
-                              <Badge size="small" color={analysis.suggested_priority === 'high' ? 'red' : 'orange'}>{formatLabel(analysis.suggested_priority || 'Normal')}</Badge>
-                            </div>
-                          </div>
-                          <div className={`p-4 rounded-2xl border flex items-center justify-between ${analysis.auto_reply_eligible ? 'bg-green-50/30 border-green-100' : 'bg-ui-bg-subtle/10 border-ui-border-base'}`}>
-                            <Text size="xsmall" className="text-ui-fg-subtle">Automation</Text>
-                            {analysis.auto_reply_eligible ? (
-                              <div className="flex items-center gap-1.5 text-ui-fg-success"><CheckCircleSolid className="h-4 w-4" /><Text size="xsmall" weight="plus">Eligible</Text></div>
-                            ) : (
-                              <div className="flex items-center gap-1.5 text-ui-fg-muted"><XCircleSolid className="h-4 w-4" /><Text size="xsmall">Manual Only</Text></div>
-                            )}
-                          </div>
-                        </div>
-                      ) : <Text size="xsmall" className="text-ui-fg-subtle italic">No AI insights available for this ticket.</Text>}
-                    </div>
-
-                    <div className="border-t pt-8">
-                      <Text size="xsmall" weight="plus" className="text-ui-fg-subtle uppercase tracking-widest font-bold mb-4">Customer Info</Text>
-                      <div className="space-y-4">
-                        <div className="flex flex-col">
-                          <Text size="small" weight="plus" className="truncate">{customerName || 'Loading...'}</Text>
-                          <Text size="xsmall" className="text-ui-fg-subtle truncate">{customerEmail || '...'}</Text>
-                        </div>
-                        <div className="grid grid-cols-2 gap-4 pt-2">
-                          <div>
-                            <Text size="xsmall" className="text-ui-fg-subtle mb-1">Assigned To</Text>
-                            <Input 
-                              className="h-8 text-xs bg-ui-bg-subtle border-none" 
-                              value={assignedToInput} 
-                              onChange={e => setAssignedToInput(e.target.value)} 
-                              onBlur={() => assignedToInput !== (selectedTicket.assigned_to ?? '') && updateTicket({ assigned_to: assignedToInput.trim() || null })}
-                              placeholder="Admin ID"
-                            />
-                          </div>
-                          <div>
-                            <Text size="xsmall" className="text-ui-fg-subtle mb-1">Status</Text>
-                            <Badge size="small" color={statusColor(selectedTicket.status)}>{formatLabel(selectedTicket.status)}</Badge>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="border-t pt-8">
-                      <div className="flex items-center justify-between mb-4">
-                        <Text size="xsmall" weight="plus" className="text-ui-fg-subtle uppercase tracking-widest font-bold">History</Text>
-                        <Badge size="2xsmall">{customerTickets.length} tickets</Badge>
-                      </div>
-                      <div className="space-y-3">
-                        {customerTickets.filter(t => t.id !== selectedTicket.id).slice(0, 5).map(t => (
-                          <button key={t.id} onClick={() => { setSelectedTicketId(t.id); setMobileView('detail'); setShowContext(false) }} className="w-full text-left p-3 rounded-xl border bg-ui-bg-subtle/20 hover:bg-ui-bg-subtle transition-all group">
-                            <Text size="xsmall" weight="plus" className="line-clamp-1 group-hover:text-ui-fg-base">{t.subject}</Text>
-                            <div className="flex items-center gap-2 mt-1 opacity-60">
-                              <Badge size="2xsmall" color={statusColor(t.status)}>{t.status}</Badge>
-                              <Text size="xsmall">{new Date(t.created_at).toLocaleDateString()}</Text>
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
+                    <ContextPanel
+                      selectedTicket={selectedTicket}
+                      customerName={customerName}
+                      customerEmail={customerEmail}
+                      customerTickets={customerTickets}
+                      assignedToInput={assignedToInput}
+                      setAssignedToInput={setAssignedToInput}
+                      updateTicket={updateTicket}
+                      analysis={analysis}
+                      loadingAnalysis={loadingAnalysis}
+                      activeTab={activeTab}
+                      onConfigureAi={() => {
+                        setShowAiSettings(true)
+                        setShowContext(false)
+                      }}
+                      onSelectTicket={(id) => { setSelectedTicketId(id); setMobileView('detail') }}
+                      onAfterSelect={() => setShowContext(false)}
+                      statusColor={statusColor}
+                    />
                   </div>
                 </div>
               </div>
@@ -982,6 +955,14 @@ export default function SupportTicketsPage() {
           </div>
         </div>
       )}
+
+      <AiSettingsDrawer
+        open={showAiSettings}
+        onOpenChange={setShowAiSettings}
+        onSettingsChanged={() => {
+          if (selectedTicketId) fetchAnalysis(selectedTicketId)
+        }}
+      />
     </Container>
   )
 }
