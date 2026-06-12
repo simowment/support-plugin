@@ -23,6 +23,7 @@ export type AIProviderConfig = {
   api_key: string
   model: string
   base_url: string
+  headers?: Record<string, string>
 }
 
 export interface AIProvider {

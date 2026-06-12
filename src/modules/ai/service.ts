@@ -51,12 +51,7 @@ type AnalyzeMessageInput = {
   existingAnalysis?: AnalysisRecord | null
 }
 
-type ProviderConfig = {
-  provider: string
-  api_key: string
-  model: string
-  base_url: string
-}
+type ProviderConfig = AIProviderConfig
 
 const ModuleOptionsSchema = z
   .object({
@@ -110,7 +105,8 @@ export default class SupportTicketAIModuleService extends MedusaService({
   // --- Provider config ---
 
   private getConfigKey(config: ProviderConfig): string {
-    return `${config.provider}:${config.api_key}:${config.model}:${config.base_url}`
+    const headerHash = config.headers ? JSON.stringify(config.headers) : ''
+    return `${config.provider}:${config.api_key}:${config.model}:${config.base_url}:${headerHash}`
   }
 
   async getProviderConfig(): Promise<ProviderConfig> {
@@ -126,6 +122,7 @@ export default class SupportTicketAIModuleService extends MedusaService({
       api_key: map['api_key'] ?? this.options_.openai_api_key ?? '',
       model: map['model'] ?? this.options_.openai_model ?? DEFAULT_MODEL,
       base_url: map['base_url'] ?? this.options_.openai_base_url ?? DEFAULT_BASE_URL,
+      headers: this.options_.openai_headers,
     }
   }
 
