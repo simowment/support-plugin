@@ -1,22 +1,19 @@
-import { MedusaRequest, MedusaResponse } from '@medusajs/framework/http'
-import { resolveTicketService } from '../../../../shared/helpers'
+import { AuthenticatedMedusaRequest, MedusaResponse } from '@medusajs/framework/http'
+import { resolveTicketService, requireAuth } from '../../../../shared/helpers'
 import { ticketEventBus } from '../../../../shared/event-bus'
 
 const HEARTBEAT_INTERVAL = 30_000 // 30 seconds
 
-export async function GET(req: MedusaRequest, res: MedusaResponse) {
-  const customerId = (req as any).auth_context?.actor_id
-  if (!customerId) {
-    res.status(401).json({ error: 'Authentication required' })
-    return
-  }
+export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) {
+  const customerId = requireAuth(req, res)
+  if (!customerId) return
 
   const ticketId = req.params.id
   const service = resolveTicketService(req)
 
   // Verify ticket ownership
   const result = await service.getTicketWithMessages(ticketId)
-  if (!result || (result.ticket as any).customer_id !== customerId) {
+  if (!result || result.ticket.customer_id !== customerId) {
     res.status(404).json({ error: 'Ticket not found' })
     return
   }

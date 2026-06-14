@@ -1,34 +1,40 @@
-import { MedusaRequest, MedusaResponse } from '@medusajs/framework/http'
+import { AuthenticatedMedusaRequest, MedusaResponse } from '@medusajs/framework/http'
 import {
   resolveTicketService,
   requireAdminAuth,
-  validateEnum,
-  VALID_STATUSES,
   ticketNotFound,
+  sendError,
 } from '../../../shared/helpers'
 import { TicketStatus } from '../../../../modules/support-ticket'
+import { UpdateTicketSchema, type UpdateTicketBody } from '../../../middlewares'
 
-type UpdateTicketBody = {
-  status?: string
-  assigned_to?: string | null
-}
+export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) {
+  const adminId = requireAdminAuth(req, res)
+  if (!adminId) return
 
-export async function GET(req: MedusaRequest, res: MedusaResponse) {
   const service = resolveTicketService(req)
   const result = await service.getTicketWithMessages(req.params.id)
   if (!result) return ticketNotFound(res)
   return res.json({ success: true, ...result })
 }
 
-export async function PATCH(req: MedusaRequest<UpdateTicketBody>, res: MedusaResponse) {
-  const { status, assigned_to } = req.body
-
-  const statusError = validateEnum(status, VALID_STATUSES, 'status')
-  if (statusError) return res.status(400).json({ success: false, error: statusError })
-
-  const service = resolveTicketService(req)
+export async function POST(req: AuthenticatedMedusaRequest<UpdateTicketBody>, res: MedusaResponse) {
   const adminId = requireAdminAuth(req, res)
   if (!adminId) return
+
+  const validated = UpdateTicketSchema.safeParse(req.body)
+  if (!validated.success) {
+    return sendError(
+      res,
+      400,
+      'VALIDATION',
+      'Invalid ticket update payload',
+      validated.error.flatten(),
+    )
+  }
+
+  const { status, assigned_to } = validated.data
+  const service = resolveTicketService(req)
 
   const ticket = await service.updateTicket(
     req.params.id,
@@ -40,7 +46,7 @@ export async function PATCH(req: MedusaRequest<UpdateTicketBody>, res: MedusaRes
   return res.json({ success: true, ticket })
 }
 
-export async function DELETE(req: MedusaRequest, res: MedusaResponse) {
+export async function DELETE(req: AuthenticatedMedusaRequest, res: MedusaResponse) {
   const service = resolveTicketService(req)
   const adminId = requireAdminAuth(req, res)
   if (!adminId) return

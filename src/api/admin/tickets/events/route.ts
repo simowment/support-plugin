@@ -1,10 +1,10 @@
-import { MedusaRequest, MedusaResponse } from '@medusajs/framework/http'
+import { AuthenticatedMedusaRequest, MedusaResponse } from '@medusajs/framework/http'
 import { requireAdminAuth } from '../../../shared/helpers'
 import { ticketEventBus } from '../../../shared/event-bus'
 
 const HEARTBEAT_INTERVAL = 30_000
 
-export async function GET(req: MedusaRequest, res: MedusaResponse) {
+export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) {
   const adminId = requireAdminAuth(req, res)
   if (!adminId) return
 

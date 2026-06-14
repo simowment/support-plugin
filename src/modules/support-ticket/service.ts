@@ -41,7 +41,7 @@ type AddMessageInput = {
   message: string
   senderType: SenderType
   senderId?: string
-  attachments?: Record<string, unknown>[]
+  attachments?: unknown[]
 }
 
 type UpdateTicketInput = {
@@ -65,18 +65,32 @@ type TicketEventData = {
   performed_by_id: string | null
 }
 
+type EventBusService = {
+  emit(input: { name: string; data: Record<string, unknown> }): Promise<void>
+}
+
+function isEventBusService(value: unknown): value is EventBusService {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'emit' in value &&
+    typeof (value as { emit?: unknown }).emit === 'function'
+  )
+}
+
 export default class SupportTicketModuleService extends MedusaService({
   Ticket,
   TicketMessage,
   TicketEvent,
   TicketNote,
 }) {
-  protected eventBusService_: any
+  protected eventBusService_: EventBusService | undefined
   private logger_: Logger
 
   constructor(container: Record<string, unknown> & { logger?: Logger }) {
     super(...arguments)
-    this.eventBusService_ = container[Modules.EVENT_BUS]
+    const eventBusService = container[Modules.EVENT_BUS]
+    this.eventBusService_ = isEventBusService(eventBusService) ? eventBusService : undefined
     this.logger_ = container.logger ?? (console as unknown as Logger)
   }
 
@@ -117,9 +131,10 @@ export default class SupportTicketModuleService extends MedusaService({
     }
   }
 
-  private warnAddMessageSideEffect(action: string, error: unknown): void {
+  private throwAddMessageSideEffect(action: string, error: unknown): never {
     const message = error instanceof Error ? error.message : String(error)
     this.logger_.warn(`[Support Tickets] addMessage ${action} failed: ${message}`)
+    throw error
   }
 
   // ── Ticket CRUD ──────────────────────────────────────────────────
@@ -197,7 +212,7 @@ export default class SupportTicketModuleService extends MedusaService({
           { id: input.ticketId, status: TicketStatus.OPEN, closed_at: null },
         ])
       } catch (error) {
-        this.warnAddMessageSideEffect('reopen ticket update', error)
+        this.throwAddMessageSideEffect('reopen ticket update', error)
       }
       try {
         await this.createTicketEvents([
@@ -210,7 +225,7 @@ export default class SupportTicketModuleService extends MedusaService({
           ),
         ])
       } catch (error) {
-        this.warnAddMessageSideEffect('reopen event creation', error)
+        this.throwAddMessageSideEffect('reopen event creation', error)
       }
     }
 
@@ -226,7 +241,7 @@ export default class SupportTicketModuleService extends MedusaService({
         ),
       ])
     } catch (error) {
-      this.warnAddMessageSideEffect('message event creation', error)
+      this.throwAddMessageSideEffect('message event creation', error)
     }
 
     // 4. Update status (non-critical — guarded)
@@ -242,7 +257,7 @@ export default class SupportTicketModuleService extends MedusaService({
           await this.updateTickets([{ id: input.ticketId, status: TicketStatus.WAITING_CUSTOMER }])
         }
       } catch (error) {
-        this.warnAddMessageSideEffect('status update', error)
+        this.throwAddMessageSideEffect('status update', error)
       }
     }
 
@@ -259,7 +274,7 @@ export default class SupportTicketModuleService extends MedusaService({
         },
       })
     } catch (error) {
-      this.warnAddMessageSideEffect('event bus emit', error)
+      this.throwAddMessageSideEffect('event bus emit', error)
     }
 
     return message
@@ -350,9 +365,11 @@ export default class SupportTicketModuleService extends MedusaService({
       return null
     }
 
-    await this.deleteTicketMessages({ ticket: ticketId })
-    await this.deleteTicketNotes({ ticket_id: ticketId })
-    await this.deleteTicketEvents({ ticket: ticketId })
+    await Promise.all([
+      this.deleteTicketMessages({ ticket: ticketId }),
+      this.deleteTicketNotes({ ticket: ticketId }),
+      this.deleteTicketEvents({ ticket: ticketId }),
+    ])
     await this.deleteTickets({ id: ticketId })
 
     await this.eventBusService_?.emit({
@@ -389,7 +406,7 @@ export default class SupportTicketModuleService extends MedusaService({
     const [messages, events, notes] = await Promise.all([
       this.listTicketMessages({ ticket: ticketId }, { order: { created_at: 'ASC' } }),
       this.listTicketEvents({ ticket: ticketId }, { order: { created_at: 'ASC' } }),
-      this.listTicketNotes({ ticket_id: ticketId }, { order: { created_at: 'ASC' } }),
+      this.listTicketNotes({ ticket: ticketId }, { order: { created_at: 'ASC' } }),
     ])
 
     return { ticket, messages, events, notes }
@@ -422,15 +439,13 @@ export default class SupportTicketModuleService extends MedusaService({
 
     // Move messages from source to target
     const messages = await this.listTicketMessages({ ticket: sourceTicketId }, { take: 1000 })
-    for (const msg of messages) {
-      await this.updateTicketMessages([{ id: (msg as { id: string }).id, ticket: targetTicketId }])
-    }
+    await this.updateTicketMessages(
+      messages.map((message) => ({ id: message.id, ticket: targetTicketId })),
+    )
 
     // Move notes from source to target
-    const notes = await this.listTicketNotes({ ticket_id: sourceTicketId }, { take: 1000 })
-    for (const note of notes) {
-      await this.updateTicketNotes([{ id: (note as { id: string }).id, ticket_id: targetTicketId }])
-    }
+    const notes = await this.listTicketNotes({ ticket: sourceTicketId }, { take: 1000 })
+    await this.updateTicketNotes(notes.map((note) => ({ id: note.id, ticket: targetTicketId })))
 
     // Mark source closed and record merge in metadata
     await this.updateTickets([
@@ -493,7 +508,7 @@ export default class SupportTicketModuleService extends MedusaService({
   async addNote(ticketId: string, content: string, authorId?: string) {
     const [note] = await this.createTicketNotes([
       {
-        ticket_id: ticketId,
+        ticket: ticketId,
         content,
         author_id: authorId ?? null,
       },

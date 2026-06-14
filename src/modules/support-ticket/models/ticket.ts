@@ -1,6 +1,7 @@
 import { model } from '@medusajs/framework/utils'
 import { TicketMessage } from './ticket-message'
 import { TicketEvent } from './ticket-event'
+import { TicketNote } from './ticket-note'
 
 export const Ticket = model
   .define('ticket', {
@@ -17,6 +18,9 @@ export const Ticket = model
       mappedBy: 'ticket',
     }),
     events: model.hasMany(() => TicketEvent, {
+      mappedBy: 'ticket',
+    }),
+    notes: model.hasMany(() => TicketNote, {
       mappedBy: 'ticket',
     }),
   })

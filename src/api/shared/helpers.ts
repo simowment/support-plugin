@@ -40,8 +40,11 @@ export function requireAuth(req: AuthenticatedMedusaRequest, res: MedusaResponse
   return customerId
 }
 
-export function requireAdminAuth(req: MedusaRequest, res: MedusaResponse): string | null {
-  const adminId = (req as any).auth_context?.actor_id
+export function requireAdminAuth(
+  req: AuthenticatedMedusaRequest,
+  res: MedusaResponse,
+): string | null {
+  const adminId = req.auth_context?.actor_id
   if (!adminId) {
     res.status(401).json({ success: false, code: 'UNAUTHORIZED', error: 'Authentication required' })
     return null

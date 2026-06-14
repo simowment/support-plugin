@@ -7,7 +7,8 @@ export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) 
 
   const service = resolveTicketService(req)
   const result = await service.getTicketWithMessages(req.params.id)
-  if (!result || (result.ticket as any).customer_id !== customerId) return ticketNotFound(res)
+  if (!result || result.ticket.customer_id !== customerId) return ticketNotFound(res)
 
-  return res.json({ success: true, ...result })
+  const { ticket, messages, events } = result
+  return res.json({ success: true, ticket, messages, events })
 }

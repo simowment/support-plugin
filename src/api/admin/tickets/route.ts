@@ -1,13 +1,17 @@
-import { MedusaRequest, MedusaResponse } from '@medusajs/framework/http'
-import { resolveTicketService, parsePagination } from '../../shared/helpers'
+import { AuthenticatedMedusaRequest, MedusaResponse } from '@medusajs/framework/http'
+import { requireAdminAuth, resolveTicketService, parsePagination } from '../../shared/helpers'
 
-export async function GET(req: MedusaRequest, res: MedusaResponse) {
+export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) {
+  const adminId = requireAdminAuth(req, res)
+  if (!adminId) return
+
   const service = resolveTicketService(req)
   const { take, skip } = parsePagination(req)
 
   const filters: Record<string, unknown> = {}
+  const validatedQuery = req.validatedQuery as Record<string, string | number | undefined>
   for (const key of ['status', 'category', 'customer_id', 'assigned_to']) {
-    const value = req.query[key] as string | undefined
+    const value = validatedQuery[key] as string | undefined
     if (value) filters[key] = value
   }
 

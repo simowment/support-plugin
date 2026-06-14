@@ -6,12 +6,12 @@
   "types": ".medusa/server/src/index.d.ts",
   "repository": {
     "type": "git",
-    "url": "https://github.com/simowment/support-plugin.git"
+    "url": "https://github.com/medusastore/medusa-plugin-support-tickets.git"
   },
   "bugs": {
-    "url": "https://github.com/simowment/support-plugin/issues"
+    "url": "https://github.com/medusastore/medusa-plugin-support-tickets/issues"
   },
-  "homepage": "https://github.com/simowment/support-plugin#readme",
+  "homepage": "https://github.com/medusastore/medusa-plugin-support-tickets#readme",
   "exports": {
     "./package.json": "./package.json",
     "./modules/*": "./.medusa/server/src/modules/*/index.js",
@@ -32,21 +32,29 @@
     }
   },
   "files": [
-    ".medusa/server"
+    ".medusa/server",
+    ".env.example",
+    "README.md",
+    "LICENSE"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "medusa plugin:build && tsc",
     "dev": "medusa plugin:develop",
     "typecheck": "tsc --noEmit",
     "lint": "eslint \"src/**/*.ts\"",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx}\"",
-    "watch": "tsc --watch --preserveWatchOutput"
+    "format:check": "prettier --check \"src/**/*.{ts,tsx}\""
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.61",
+    "@medusajs/admin-sdk": "2.15.5",
+    "@medusajs/js-sdk": "2.15.5",
     "@medusajs/icons": "^2.15.5",
     "@medusajs/ui": "^4.1.15",
     "ai": "^6.0.175",
+    "multer": "^2.0.2",
     "zod": "^3.24.0"
   },
   "peerDependencies": {

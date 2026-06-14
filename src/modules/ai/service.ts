@@ -13,10 +13,23 @@ import {
   BLOCKED_AUTO_REPLY_CATEGORIES,
   MAX_HISTORY_MESSAGES,
   MAX_HISTORY_CHARS,
+  API_KEY_SETTING_KEY,
+  BASE_URL_SETTING_KEY,
+  MODEL_SETTING_KEY,
+  PROVIDER_SETTING_KEY,
 } from './constants'
 import type { ActionDecision, AIProvider, AIProviderConfig } from './types'
-import { OpenAIProvider, ProviderAuthError, type OpenAIProviderConfig } from './providers/openai-provider'
+import {
+  OpenAIProvider,
+  ProviderAuthError,
+  type OpenAIProviderConfig,
+} from './providers/openai-provider'
 import { ActionDecisionSchema } from './validation'
+import {
+  decryptApiKey,
+  encryptApiKey,
+  isInvalidEncryptedApiKeyError,
+} from './api-key-encryption'
 
 type AnalysisRecord = {
   id: string
@@ -52,6 +65,11 @@ type AnalyzeMessageInput = {
 }
 
 type ProviderConfig = AIProviderConfig
+type ProviderSettingKey = (typeof PROVIDER_KEYS)[number]
+type AISettingRecord = {
+  key: ProviderSettingKey
+  value: string
+}
 
 const ModuleOptionsSchema = z
   .object({
@@ -69,6 +87,27 @@ const PROVIDER_REGISTRY: Record<string, (config: OpenAIProviderConfig) => AIProv
   openai: (cfg) => new OpenAIProvider(cfg),
   openrouter: (cfg) => new OpenAIProvider(cfg),
   custom: (cfg) => new OpenAIProvider(cfg),
+}
+
+function preserveProviderSettingValue(value: string): string {
+  return value
+}
+
+const PROVIDER_SETTING_VALUE_READERS: Record<
+  ProviderSettingKey,
+  (value: string) => string | undefined
+> = {
+  [PROVIDER_SETTING_KEY]: preserveProviderSettingValue,
+  [API_KEY_SETTING_KEY]: decryptApiKey,
+  [MODEL_SETTING_KEY]: preserveProviderSettingValue,
+  [BASE_URL_SETTING_KEY]: preserveProviderSettingValue,
+}
+
+const PROVIDER_SETTING_VALUE_WRITERS: Record<ProviderSettingKey, (value: string) => string> = {
+  [PROVIDER_SETTING_KEY]: preserveProviderSettingValue,
+  [API_KEY_SETTING_KEY]: encryptApiKey,
+  [MODEL_SETTING_KEY]: preserveProviderSettingValue,
+  [BASE_URL_SETTING_KEY]: preserveProviderSettingValue,
 }
 
 function createProvider(config: AIProviderConfig, options?: ModuleOptions): AIProvider {
@@ -109,19 +148,37 @@ export default class SupportTicketAIModuleService extends MedusaService({
     return `${config.provider}:${config.api_key}:${config.model}:${config.base_url}:${headerHash}`
   }
 
+  private readProviderSetting(setting: AISettingRecord): string | undefined {
+    try {
+      return PROVIDER_SETTING_VALUE_READERS[setting.key](setting.value)
+    } catch (error) {
+      if (setting.key === API_KEY_SETTING_KEY && isInvalidEncryptedApiKeyError(error)) {
+        this.logger_.warn(
+          '[support-ticket-ai] Ignoring invalid persisted AI API key; re-save the key in AI Support settings.',
+        )
+        return undefined
+      }
+
+      throw error
+    }
+  }
+
   async getProviderConfig(): Promise<ProviderConfig> {
     const settings = await this.listAISettings({ key: PROVIDER_KEYS })
 
-    const map: Record<string, string> = {}
-    for (const s of settings as Array<{ key: string; value: string }>) {
-      map[s.key] = s.value
+    const map: Partial<Record<ProviderSettingKey, string>> = {}
+    for (const s of settings as AISettingRecord[]) {
+      const value = this.readProviderSetting(s)
+      if (value !== undefined) {
+        map[s.key] = value
+      }
     }
 
     return {
-      provider: map['provider'] ?? DEFAULT_PROVIDER,
-      api_key: map['api_key'] ?? this.options_.openai_api_key ?? '',
-      model: map['model'] ?? this.options_.openai_model ?? DEFAULT_MODEL,
-      base_url: map['base_url'] ?? this.options_.openai_base_url ?? DEFAULT_BASE_URL,
+      provider: map[PROVIDER_SETTING_KEY] ?? DEFAULT_PROVIDER,
+      api_key: map[API_KEY_SETTING_KEY] ?? this.options_.openai_api_key ?? '',
+      model: map[MODEL_SETTING_KEY] ?? this.options_.openai_model ?? DEFAULT_MODEL,
+      base_url: map[BASE_URL_SETTING_KEY] ?? this.options_.openai_base_url ?? DEFAULT_BASE_URL,
       headers: this.options_.openai_headers,
     }
   }
@@ -166,17 +223,18 @@ export default class SupportTicketAIModuleService extends MedusaService({
     for (const key of PROVIDER_KEYS) {
       const value = config[key]
       if (value === undefined) continue
+      const storedValue = PROVIDER_SETTING_VALUE_WRITERS[key](String(value))
 
       const [existing] = await this.listAISettings({ key }, { take: 1 })
       if (existing) {
         await this.updateAISettings([
           {
             id: existing.id,
-            value: String(value),
+            value: storedValue,
           },
         ])
       } else {
-        await this.createAISettings([{ key, value: String(value) }])
+        await this.createAISettings([{ key, value: storedValue }])
       }
     }
 

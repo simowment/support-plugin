@@ -6,6 +6,6 @@ export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse)
   const customerId = requireAuth(req, res)
   if (!customerId) return
 
-  const attachments = await handleFileUpload(req, res)
+  const attachments = await handleFileUpload(req)
   return res.status(201).json({ success: true, attachments })
 }

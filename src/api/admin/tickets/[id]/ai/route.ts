@@ -1,4 +1,4 @@
-import { MedusaRequest, MedusaResponse } from '@medusajs/framework/http'
+import { AuthenticatedMedusaRequest, MedusaResponse } from '@medusajs/framework/http'
 import { MedusaError } from '@medusajs/framework/utils'
 import {
   SUPPORT_TICKET_MODULE,
@@ -7,6 +7,7 @@ import {
 import SupportTicketAIModuleService from '../../../../../modules/ai/service'
 import { SUPPORT_TICKET_AI_MODULE } from '../../../../../modules/ai/constants'
 import { sendEscalation } from '../../../../../utils/escalation-webhook'
+import { requireAdminAuth } from '../../../../shared/helpers'
 
 type TicketRecord = {
   subject: string
@@ -21,7 +22,10 @@ type TicketMessageRecord = {
 }
 
 // GET /admin/tickets/:id/ai — Get AI analysis for a ticket
-export async function GET(req: MedusaRequest, res: MedusaResponse) {
+export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) {
+  const adminId = requireAdminAuth(req, res)
+  if (!adminId) return
+
   const { id } = req.params
   const aiService: SupportTicketAIModuleService = req.scope.resolve(SUPPORT_TICKET_AI_MODULE)
 
@@ -41,7 +45,10 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
 }
 
 // POST /admin/tickets/:id/ai — Analyze a ticket now with the configured AI provider
-export async function POST(req: MedusaRequest, res: MedusaResponse) {
+export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse) {
+  const adminId = requireAdminAuth(req, res)
+  if (!adminId) return
+
   const { id } = req.params
   const logger = req.scope.resolve('logger')
   const aiService: SupportTicketAIModuleService = req.scope.resolve(SUPPORT_TICKET_AI_MODULE)

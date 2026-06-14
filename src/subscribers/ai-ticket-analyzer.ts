@@ -48,7 +48,9 @@ export default async function handleAiTicketEvents({
       }
 
       if (!enabled) {
-        logger.info(`[support-ticket-ai] AI is disabled, skipping analysis for ticket ${ticketData.id}`)
+        logger.info(
+          `[support-ticket-ai] AI is disabled, skipping analysis for ticket ${ticketData.id}`,
+        )
         return
       }
 
@@ -118,7 +120,9 @@ export default async function handleAiTicketEvents({
       logger.info(`[support-ticket-ai] Deciding action for ticket ${messageData.ticket_id}`)
 
       if (!ticketResult) {
-        logger.warn(`[support-ticket-ai] Ticket ${messageData.ticket_id} not found, skipping analysis`)
+        logger.warn(
+          `[support-ticket-ai] Ticket ${messageData.ticket_id} not found, skipping analysis`,
+        )
         return
       }
       const conversationHistory =

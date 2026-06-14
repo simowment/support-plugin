@@ -1,4 +1,5 @@
 import { SubscriberArgs, type SubscriberConfig } from '@medusajs/framework'
+import type { Logger } from '@medusajs/framework/types'
 import { TicketEventName } from '../modules/support-ticket'
 import { ticketEventBus } from '../api/shared/event-bus'
 import { getErrorMessage } from '../api/shared/helpers'
@@ -12,7 +13,7 @@ const TICKET_CATEGORY_LABELS: Record<string, string> = {
   general: 'General',
 }
 
-function buildDiscordFields(data: {
+type TicketNotificationData = {
   id: string
   ticket_id?: string
   subject?: string
@@ -21,7 +22,11 @@ function buildDiscordFields(data: {
   order_id?: string | null
   message?: string
   sender_type?: string
-}) {
+  sender_id?: string
+  status?: string
+}
+
+function buildDiscordFields(data: TicketNotificationData) {
   const ticketId = data.ticket_id || data.id
   const categoryLabel = data.category
     ? (TICKET_CATEGORY_LABELS[data.category] ?? data.category)
@@ -50,9 +55,9 @@ function buildDiscordFields(data: {
 }
 
 async function sendDiscordWebhook(
-  logger: any,
+  logger: Logger,
   event: string,
-  data: any,
+  data: TicketNotificationData,
   title: string,
   color: number,
 ) {
@@ -86,17 +91,7 @@ async function sendDiscordWebhook(
 export default async function ticketNotificationHandler({
   event: { name, data },
   container,
-}: SubscriberArgs<{
-  id: string
-  subject?: string
-  category?: string
-  customer_id?: string
-  order_id?: string | null
-  message?: string
-  ticket_id?: string
-  sender_type?: string
-  sender_id?: string
-}>) {
+}: SubscriberArgs<TicketNotificationData>) {
   const logger = container.resolve('logger')
 
   logger.info(`[Support Tickets] Event: ${name} ticket=${data.id || data.ticket_id}`)
@@ -125,7 +120,7 @@ export default async function ticketNotificationHandler({
       ticketEventBus.emit({
         ticketId,
         type: 'status_changed',
-        payload: { status: (data as any).status },
+        payload: { status: data.status },
       })
       break
 

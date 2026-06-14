@@ -24,13 +24,13 @@ Add the plugin to your Medusa project:
 
 ```bash
 # pnpm
-pnpm add <path-to-medusa-plugin-support-tickets>
+pnpm add @medusastore/medusa-plugin-support-tickets
 
 # npm
-npm install <path-to-medusa-plugin-support-tickets>
+npm install @medusastore/medusa-plugin-support-tickets
 
 # bun
-bun add <path-to-medusa-plugin-support-tickets>
+bun add @medusastore/medusa-plugin-support-tickets
 ```
 
 ## Configuration
@@ -63,6 +63,7 @@ Copy `.env.example` and fill in your values.
 Optional:
 
 - `DISCORD_WEBHOOK_URL` — Discord channel webhook for new ticket, customer reply, ticked closed, and escalation notifications.
+- `SUPPORT_TICKET_AI_KEY_ENCRYPTION_KEY` — high-entropy secret required before storing or reading AI provider API keys from the Admin UI. Persisted API keys must be encrypted with AES-256-GCM.
 - `OPENAI_API_KEY` — AI provider API key (runtime override, otherwise configured from admin).
 - `OPENAI_MODEL` — AI model name override (default: `poolside/laguna-xs.2:free` via OpenRouter).
 - `OPENAI_BASE_URL` — AI provider base URL override (default: `https://openrouter.ai/api/v1`).
@@ -88,35 +89,41 @@ The plugin creates the following tables:
 
 ### Store routes
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/store/tickets` | List customer's tickets (optional status filter) |
-| `POST` | `/store/tickets` | Create a new ticket |
-| `GET` | `/store/tickets/:id` | Get ticket with messages, events, and notes (ownership verified) |
-| `POST` | `/store/tickets/:id/messages` | Reply to a ticket (customer) |
-| `GET` | `/store/tickets/:id/events` | SSE endpoint for real-time ticket updates |
-| `POST` | `/store/tickets/upload` | Upload file attachments |
+| Method | Path                          | Description                                                      |
+| ------ | ----------------------------- | ---------------------------------------------------------------- |
+| `GET`  | `/store/tickets`              | List customer's tickets (optional status filter)                 |
+| `POST` | `/store/tickets`              | Create a new ticket                                              |
+| `GET`  | `/store/tickets/:id`          | Get ticket with messages, events, and notes (ownership verified) |
+| `POST` | `/store/tickets/:id/messages` | Reply to a ticket (customer)                                     |
+| `GET`  | `/store/tickets/:id/events`   | SSE endpoint for real-time ticket updates                        |
+| `POST` | `/store/tickets/upload`       | Upload file attachments                                          |
 
 ### Admin routes
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/admin/tickets` | List tickets (filters: status, category, customer_id, assigned_to) |
-| `GET` | `/admin/tickets/:id` | Get full ticket details with messages, events, notes |
-| `PATCH` | `/admin/tickets/:id` | Update ticket (status, assigned_to) |
-| `DELETE` | `/admin/tickets/:id` | Delete ticket and associated data |
-| `POST` | `/admin/tickets/:id/messages` | Reply as admin |
-| `GET` | `/admin/tickets/:id/notes` | List internal notes |
-| `POST` | `/admin/tickets/:id/notes` | Add internal note |
-| `POST` | `/admin/tickets/:id/merge` | Merge source ticket into this ticket (same customer only) |
-| `POST` | `/admin/tickets/bulk` | Bulk update tickets (status, assignment) |
-| `GET` | `/admin/tickets/events` | SSE endpoint for admin notification indicators |
-| `GET` | `/admin/tickets/notifications` | Unread customer reply count and recent tickets |
-| `POST` | `/admin/tickets/upload` | Upload file attachments |
-| `GET` | `/admin/tickets/ai-settings` | Get AI configuration (provider, prompts, enabled flags) |
-| `POST` | `/admin/tickets/ai-settings` | Update AI configuration |
-| `GET` | `/admin/tickets/:id/ai` | Get AI analysis for a ticket |
-| `POST` | `/admin/tickets/:id/ai` | Trigger on-demand AI analysis |
+| Method   | Path                           | Description                                                        |
+| -------- | ------------------------------ | ------------------------------------------------------------------ |
+| `GET`    | `/admin/tickets`               | List tickets (filters: status, category, customer_id, assigned_to) |
+| `GET`    | `/admin/tickets/:id`           | Get full ticket details with messages, events, notes               |
+| `POST`   | `/admin/tickets/:id`           | Update ticket (status, assigned_to)                                |
+| `DELETE` | `/admin/tickets/:id`           | Delete ticket and associated data                                  |
+| `POST`   | `/admin/tickets/:id/messages`  | Reply as admin                                                     |
+| `GET`    | `/admin/tickets/:id/notes`     | List internal notes                                                |
+| `POST`   | `/admin/tickets/:id/notes`     | Add internal note                                                  |
+| `POST`   | `/admin/tickets/:id/merge`     | Merge source ticket into this ticket (same customer only)          |
+| `POST`   | `/admin/tickets/bulk`          | Bulk update tickets (status, assignment)                           |
+| `GET`    | `/admin/tickets/events`        | SSE endpoint for admin notification indicators                     |
+| `GET`    | `/admin/tickets/notifications` | Unread customer reply count and recent tickets                     |
+| `POST`   | `/admin/tickets/upload`        | Upload file attachments                                            |
+| `GET`    | `/admin/tickets/ai-settings`   | Get AI configuration (provider, prompts, enabled flags)            |
+| `POST`   | `/admin/tickets/ai-settings`   | Update AI configuration                                            |
+| `GET`    | `/admin/tickets/:id/ai`        | Get AI analysis for a ticket                                       |
+| `POST`   | `/admin/tickets/:id/ai`        | Trigger on-demand AI analysis                                      |
+
+### Attachment routes
+
+| Method | Path                                                              | Description                                                                 |
+| ------ | ----------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `GET`  | `/support-tickets/tickets/:ticket_id/attachments/:file_id`        | Stream a private attachment after admin auth or customer ownership checking |
 
 ### Modules
 
@@ -175,7 +182,9 @@ src/
 - Tickets follow a status lifecycle: `open` → `in_progress` / `waiting_customer` / `waiting_admin` → `closed`. Closed tickets are reopened automatically when a new message is received.
 - AI auto-reply requires a confidence score of ≥0.85 and is blocked for sensitive categories (refund, payment, fraud, legal, etc.). Auto-reply is disabled by default.
 - The AI provider defaults to OpenRouter (`poolside/laguna-xs.2:free`). Provider config can be set at runtime from the admin UI and persists to the database.
-- File uploads are validated client-side via MIME magic bytes. Allowed types: PNG, JPEG, WebP, GIF, SVG, PDF, plain text, CSV, DOC, DOCX, XLS, XLSX.
+- File uploads are validated server-side via MIME magic bytes. Allowed types: PNG, JPEG, WebP, GIF, SVG, PDF, plain text, CSV, DOC, DOCX, XLS, XLSX.
+- Attachments are uploaded with Medusa File Module `private` access. Persisted attachment URLs point to an authenticated plugin route that streams files only to admins or to the customer that owns the ticket. Configure the active Medusa file provider so private objects are not publicly readable.
+- **SSE deployment model** — Real-time ticket updates use an in-memory event bus. This works for a single Medusa process. Multi-instance deployments should use sticky sessions or replace the event bus with Redis/pubsub before relying on SSE for cross-instance delivery.
 - SSE connections send a heartbeat every 30 seconds. The store endpoint verifies ticket ownership before subscribing.
 - Plugin options are optional. AI settings can be configured entirely from the admin UI — no environment variables or config overrides are required.
 

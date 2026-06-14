@@ -1,22 +1,20 @@
-import { MedusaRequest, MedusaResponse } from '@medusajs/framework/http'
-import { resolveTicketService, requireAdminAuth, sendError, getErrorMessage } from '../../../../shared/helpers'
+import { AuthenticatedMedusaRequest, MedusaResponse } from '@medusajs/framework/http'
+import {
+  resolveTicketService,
+  requireAdminAuth,
+  sendError,
+  getErrorMessage,
+} from '../../../../shared/helpers'
+import type { MergeTicketBody } from '../../../../middlewares'
 
-type MergeBody = {
-  source_ticket_id?: unknown
-}
-
-export async function POST(req: MedusaRequest<MergeBody>, res: MedusaResponse) {
+export async function POST(req: AuthenticatedMedusaRequest<MergeTicketBody>, res: MedusaResponse) {
   const adminId = requireAdminAuth(req, res)
   if (!adminId) return
 
-  const { source_ticket_id } = req.body ?? {}
-
-  if (typeof source_ticket_id !== 'string' || !source_ticket_id.trim()) {
-    return sendError(res, 400, 'VALIDATION', 'source_ticket_id is required and must be a string.')
-  }
+  const { source_ticket_id } = req.validatedBody
 
   const targetTicketId = req.params.id
-  const sourceTicketId = source_ticket_id.trim()
+  const sourceTicketId = source_ticket_id
 
   if (sourceTicketId === targetTicketId) {
     return sendError(res, 400, 'VALIDATION', 'Cannot merge a ticket with itself.')

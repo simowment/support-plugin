@@ -1,11 +1,14 @@
-import { MedusaRequest, MedusaResponse } from '@medusajs/framework/http'
-import { resolveTicketService } from '../../../shared/helpers'
+import { AuthenticatedMedusaRequest, MedusaResponse } from '@medusajs/framework/http'
+import { requireAdminAuth, resolveTicketService } from '../../../shared/helpers'
 
 /**
  * GET /admin/tickets/notifications
  * Returns counts and recent tickets with customer replies for admin notification indicators.
  */
-export async function GET(req: MedusaRequest, res: MedusaResponse) {
+export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) {
+  const adminId = requireAdminAuth(req, res)
+  if (!adminId) return
+
   const service = resolveTicketService(req)
 
   const [unreadCustomerReplyCount, tickets] = await Promise.all([

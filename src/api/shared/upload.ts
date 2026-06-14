@@ -1,9 +1,11 @@
-import { MedusaRequest, MedusaResponse } from '@medusajs/framework/http'
+import { MedusaRequest } from '@medusajs/framework/http'
 import { MedusaError } from '@medusajs/framework/utils'
 import { uploadFilesWorkflow } from '@medusajs/core-flows'
 import { MAX_FILE_SIZE_BYTES, MAX_FILES_PER_MESSAGE, ALLOWED_MIME_TYPES } from './helpers'
+import { buildPendingAttachmentUrl } from './attachments'
 
 type AttachmentResult = {
+  id: string
   url: string
   filename: string
   mimeType: string
@@ -39,7 +41,7 @@ function getMimeType(file: Express.Multer.File) {
   return file.mimetype
 }
 
-function validateFile(file: Express.Multer.File, index: number) {
+function validateFile(file: Express.Multer.File) {
   if (file.size > MAX_FILE_SIZE_BYTES) {
     const maxMB = (MAX_FILE_SIZE_BYTES / (1024 * 1024)).toFixed(0)
     throw new MedusaError(
@@ -57,10 +59,7 @@ function validateFile(file: Express.Multer.File, index: number) {
   }
 }
 
-export async function handleFileUpload(
-  req: MedusaRequest,
-  res: MedusaResponse,
-): Promise<AttachmentResult[]> {
+export async function handleFileUpload(req: MedusaRequest): Promise<AttachmentResult[]> {
   const files = req.files as Express.Multer.File[]
 
   if (!files?.length) {
@@ -75,7 +74,7 @@ export async function handleFileUpload(
   }
 
   for (let i = 0; i < files.length; i++) {
-    validateFile(files[i], i)
+    validateFile(files[i])
   }
 
   const { result } = await uploadFilesWorkflow(req.scope).run({
@@ -84,7 +83,7 @@ export async function handleFileUpload(
         filename: file.originalname,
         mimeType: getMimeType(file),
         content: file.buffer.toString('base64'),
-        access: 'public' as const,
+        access: 'private' as const,
       })),
     },
   })
@@ -96,7 +95,8 @@ export async function handleFileUpload(
   const resultArray = Array.isArray(result) ? result : [result]
 
   return resultArray.map((file, index) => ({
-    url: file.url,
+    id: file.id,
+    url: buildPendingAttachmentUrl(file.id),
     filename: files[index].originalname,
     mimeType: getMimeType(files[index]),
     size: files[index].size,

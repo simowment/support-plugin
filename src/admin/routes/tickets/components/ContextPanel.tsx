@@ -2,7 +2,7 @@ import { Badge, Input, Text } from '@medusajs/ui'
 import type { AIAnalysis } from '../lib/ai'
 import { formatLabel } from '../lib/format'
 import { IntelligencePanel } from './IntelligencePanel'
-import type { Ticket } from '../page'
+import type { Ticket } from '../lib/ticket-page'
 
 const MAX_HISTORY = 5
 
