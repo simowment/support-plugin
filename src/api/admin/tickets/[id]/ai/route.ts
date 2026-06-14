@@ -25,13 +25,19 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
   const { id } = req.params
   const aiService: SupportTicketAIModuleService = req.scope.resolve(SUPPORT_TICKET_AI_MODULE)
 
-  const analysis = await aiService.getAnalysisForTicket(id)
-
-  if (!analysis) {
-    throw new MedusaError(MedusaError.Types.NOT_FOUND, 'No AI analysis found for this ticket')
+  const isEnabled = await aiService.isEnabled()
+  if (!isEnabled) {
+    return res.json({ analysis: null })
   }
 
-  return res.json({ analysis })
+  const providerConfig = await aiService.getProviderConfig()
+  if (!providerConfig.api_key) {
+    return res.json({ analysis: null })
+  }
+
+  const analysis = await aiService.getAnalysisForTicket(id)
+
+  return res.json({ analysis: analysis ?? null })
 }
 
 // POST /admin/tickets/:id/ai — Analyze a ticket now with the configured AI provider

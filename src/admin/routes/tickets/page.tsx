@@ -236,7 +236,6 @@ export default function SupportTicketsPage() {
       setAnalysis(data.analysis)
     } catch (error) {
       console.error(`[tickets] fetchAnalysis failed for ${ticketId}`, error)
-      toast.error('Failed to load AI analysis')
       setAnalysis(null)
     } finally {
       setLoadingAnalysis(false)
