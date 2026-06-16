@@ -15,14 +15,6 @@ const PROVIDER_OPTIONS = [
   { value: 'custom', label: 'Custom (OpenAI-compatible)' },
 ]
 
-const PROVIDER_BASE_URLS: Record<string, string> = {
-  openrouter: 'https://openrouter.ai/api/v1',
-  openai: 'https://api.openai.com/v1',
-  custom: '',
-}
-
-const DEFAULT_MODEL = 'gpt-4o'
-
 type Props = {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -30,7 +22,7 @@ type Props = {
 }
 
 const initialProvider: ProviderSettings = {
-  provider: 'openrouter',
+  provider: '',
   model: '',
   base_url: '',
   has_api_key: false,
@@ -86,7 +78,6 @@ export const AiSettingsDrawer = ({ open, onOpenChange, onSettingsChanged }: Prop
     setProvider((prev) => ({
       ...prev,
       provider: next,
-      base_url: PROVIDER_BASE_URLS[next] ?? prev.base_url,
     }))
   }
 
@@ -172,7 +163,7 @@ export const AiSettingsDrawer = ({ open, onOpenChange, onSettingsChanged }: Prop
                     <Label htmlFor="ai-provider">Model Provider</Label>
                     <Select value={provider.provider} onValueChange={handleProviderChange}>
                       <Select.Trigger id="ai-provider" className="mt-1">
-                        <Select.Value />
+                        <Select.Value placeholder="Select provider" />
                       </Select.Trigger>
                       <Select.Content>
                         {PROVIDER_OPTIONS.map((o) => (
@@ -192,7 +183,7 @@ export const AiSettingsDrawer = ({ open, onOpenChange, onSettingsChanged }: Prop
                       onChange={(e) =>
                         setProvider((p) => ({ ...p, model: e.target.value }))
                       }
-                      placeholder={DEFAULT_MODEL}
+                      placeholder="Enter model name"
                     />
                   </div>
                   <div>
@@ -204,7 +195,7 @@ export const AiSettingsDrawer = ({ open, onOpenChange, onSettingsChanged }: Prop
                       onChange={(e) =>
                         setProvider((p) => ({ ...p, base_url: e.target.value }))
                       }
-                      placeholder="https://api.openai.com/v1"
+                      placeholder="https://provider.example/v1"
                     />
                   </div>
                   <div>

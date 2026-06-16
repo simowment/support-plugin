@@ -5,9 +5,6 @@ import { AITicketAnalysis } from './models/ai-ticket-analysis'
 import { AISetting } from './models/ai-setting'
 import {
   CONFIDENCE_THRESHOLD_AUTO_REPLY,
-  DEFAULT_MODEL,
-  DEFAULT_BASE_URL,
-  DEFAULT_PROVIDER,
   PROVIDER_KEYS,
   PROMPT_KEYS,
   BLOCKED_AUTO_REPLY_CATEGORIES,
@@ -114,8 +111,8 @@ function createProvider(config: AIProviderConfig, options?: ModuleOptions): AIPr
   const factory = PROVIDER_REGISTRY[config.provider] ?? PROVIDER_REGISTRY.custom
   return factory({
     apiKey: config.api_key,
-    model: config.model || undefined,
-    baseUrl: config.base_url || undefined,
+    model: config.model,
+    baseUrl: config.base_url,
     headers: options?.openai_headers,
   })
 }
@@ -175,10 +172,10 @@ export default class SupportTicketAIModuleService extends MedusaService({
     }
 
     return {
-      provider: map[PROVIDER_SETTING_KEY] ?? DEFAULT_PROVIDER,
+      provider: map[PROVIDER_SETTING_KEY] ?? '',
       api_key: map[API_KEY_SETTING_KEY] ?? this.options_.openai_api_key ?? '',
-      model: map[MODEL_SETTING_KEY] ?? this.options_.openai_model ?? DEFAULT_MODEL,
-      base_url: map[BASE_URL_SETTING_KEY] ?? this.options_.openai_base_url ?? DEFAULT_BASE_URL,
+      model: map[MODEL_SETTING_KEY] ?? this.options_.openai_model ?? '',
+      base_url: map[BASE_URL_SETTING_KEY] ?? this.options_.openai_base_url ?? '',
       headers: this.options_.openai_headers,
     }
   }
@@ -252,10 +249,16 @@ export default class SupportTicketAIModuleService extends MedusaService({
       return this.cachedProvider
     }
 
-    if (!config.api_key) {
+    const missingKeys = PROVIDER_KEYS.filter((key) => key !== API_KEY_SETTING_KEY || !config.api_key)
+      .filter((key) => {
+        const value = config[key]
+        return typeof value !== 'string' || value.trim().length === 0
+      })
+
+    if (missingKeys.length > 0) {
       throw new MedusaError(
         MedusaError.Types.INVALID_DATA,
-        'AI provider not configured. Set the API key in AI Support settings.',
+        `AI provider not configured. Set ${missingKeys.join(', ')} in AI Support settings.`,
       )
     }
 

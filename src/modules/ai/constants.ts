@@ -2,9 +2,6 @@ export const SUPPORT_TICKET_AI_MODULE = 'supportTicketAi'
 
 export const CONFIDENCE_THRESHOLD_AUTO_REPLY = 0.85
 
-export const DEFAULT_MODEL = 'poolside/laguna-xs.2:free'
-export const DEFAULT_BASE_URL = 'https://openrouter.ai/api/v1'
-export const DEFAULT_PROVIDER = 'openrouter'
 export const API_TIMEOUT_MS = 30000
 
 export const PROVIDER_SETTING_KEY = 'provider'

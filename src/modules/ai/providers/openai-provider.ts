@@ -2,7 +2,7 @@ import { createOpenAI } from '@ai-sdk/openai'
 import { generateObject } from 'ai'
 import { z } from 'zod'
 import type { AIProvider, GenerateResponseResult, ActionDecision } from '../types'
-import { DEFAULT_MODEL, DEFAULT_BASE_URL, API_TIMEOUT_MS } from '../constants'
+import { API_TIMEOUT_MS } from '../constants'
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
@@ -11,8 +11,8 @@ function getErrorMessage(error: unknown): string {
 
 export type OpenAIProviderConfig = {
   apiKey: string
-  model?: string
-  baseUrl?: string
+  model: string
+  baseUrl: string
   headers?: Record<string, string>
 }
 
@@ -32,11 +32,11 @@ export class OpenAIProvider implements AIProvider {
 
   constructor(config: OpenAIProviderConfig) {
     this.client = createOpenAI({
-      baseURL: config.baseUrl ?? DEFAULT_BASE_URL,
+      baseURL: config.baseUrl,
       apiKey: config.apiKey,
       headers: config.headers,
     })
-    this.model = this.client(config.model ?? DEFAULT_MODEL)
+    this.model = this.client(config.model)
   }
 
   private createAbortSignal(): AbortSignal {

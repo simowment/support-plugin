@@ -35,7 +35,7 @@ bun add @medusastore/medusa-plugin-support-tickets
 
 ## Configuration
 
-Register the plugin in `medusa-config.ts`. No options are required — the plugin works out of the box.
+Register the plugin in `medusa-config.ts`. No options are required for the core ticketing features.
 
 ```ts
 {
@@ -43,7 +43,7 @@ Register the plugin in `medusa-config.ts`. No options are required — the plugi
 }
 ```
 
-The AI module accepts optional startup overrides. These can also be configured at runtime from the Admin → AI Support page (settings persist to the database).
+The AI module does not ship with a default provider, model, or base URL. Configure AI at runtime from the Admin AI Support page, or provide startup overrides from your backend environment.
 
 ```ts
 {
@@ -65,8 +65,8 @@ Optional:
 - `DISCORD_WEBHOOK_URL` — Discord channel webhook for new ticket, customer reply, ticked closed, and escalation notifications.
 - `SUPPORT_TICKET_AI_KEY_ENCRYPTION_KEY` — high-entropy secret required before storing or reading AI provider API keys from the Admin UI. Persisted API keys must be encrypted with AES-256-GCM.
 - `OPENAI_API_KEY` — AI provider API key (runtime override, otherwise configured from admin).
-- `OPENAI_MODEL` — AI model name override (default: `poolside/laguna-xs.2:free` via OpenRouter).
-- `OPENAI_BASE_URL` — AI provider base URL override (default: `https://openrouter.ai/api/v1`).
+- `OPENAI_MODEL` - AI model name override.
+- `OPENAI_BASE_URL` - AI provider base URL override.
 
 ## Database
 
@@ -181,13 +181,15 @@ src/
 
 - Tickets follow a status lifecycle: `open` → `in_progress` / `waiting_customer` / `waiting_admin` → `closed`. Closed tickets are reopened automatically when a new message is received.
 - AI auto-reply requires a confidence score of ≥0.85 and is blocked for sensitive categories (refund, payment, fraud, legal, etc.). Auto-reply is disabled by default.
-- The AI provider defaults to OpenRouter (`poolside/laguna-xs.2:free`). Provider config can be set at runtime from the admin UI and persists to the database.
+- The AI provider has no built-in default. Provider, API key, model, and base URL must be configured before AI analysis or response generation can run.
 - File uploads are validated server-side via MIME magic bytes. Allowed types: PNG, JPEG, WebP, GIF, SVG, PDF, plain text, CSV, DOC, DOCX, XLS, XLSX.
 - Attachments are uploaded with Medusa File Module `private` access. Persisted attachment URLs point to an authenticated plugin route that streams files only to admins or to the customer that owns the ticket. Configure the active Medusa file provider so private objects are not publicly readable.
 - **SSE deployment model** — Real-time ticket updates use an in-memory event bus. This works for a single Medusa process. Multi-instance deployments should use sticky sessions or replace the event bus with Redis/pubsub before relying on SSE for cross-instance delivery.
 - SSE connections send a heartbeat every 30 seconds. The store endpoint verifies ticket ownership before subscribing.
-- Plugin options are optional. AI settings can be configured entirely from the admin UI — no environment variables or config overrides are required.
+- Plugin options are optional. AI settings can be configured entirely from the admin UI; startup environment variables are only overrides.
 
 ## License
 
 MIT
+
+
