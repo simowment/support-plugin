@@ -28,6 +28,19 @@ import {
   isInvalidEncryptedApiKeyError,
 } from './api-key-encryption'
 
+type AiGatewayHelper = {
+  DEFAULT_AI_GATEWAY_PROVIDER: 'openrouter'
+  resolvePortkeyGatewayHeaders: (input: {
+    baseUrl?: string
+    headers?: Record<string, string>
+    provider?: string
+  }) => Record<string, string>
+}
+
+const { DEFAULT_AI_GATEWAY_PROVIDER, resolvePortkeyGatewayHeaders } = require(
+  '@medusastore/shared-config/ai-gateway',
+) as AiGatewayHelper
+
 type AnalysisRecord = {
   id: string
   ticket_id: string
@@ -107,14 +120,32 @@ const PROVIDER_SETTING_VALUE_WRITERS: Record<ProviderSettingKey, (value: string)
   [BASE_URL_SETTING_KEY]: preserveProviderSettingValue,
 }
 
-function createProvider(config: AIProviderConfig, options?: ModuleOptions): AIProvider {
+function createProvider(config: AIProviderConfig): AIProvider {
   const factory = PROVIDER_REGISTRY[config.provider] ?? PROVIDER_REGISTRY.custom
   return factory({
     apiKey: config.api_key,
     model: config.model,
     baseUrl: config.base_url,
-    headers: options?.openai_headers,
+    headers: config.headers,
   })
+}
+
+function normalizeProviderConfig(config: ProviderConfig): ProviderConfig {
+  const provider = config.provider.trim() || DEFAULT_AI_GATEWAY_PROVIDER
+  const baseUrl = config.base_url.trim()
+
+  return {
+    ...config,
+    provider,
+    api_key: config.api_key.trim(),
+    model: config.model.trim(),
+    base_url: baseUrl,
+    headers: resolvePortkeyGatewayHeaders({
+      baseUrl,
+      headers: config.headers,
+      provider,
+    }),
+  }
 }
 
 function limitHistory(history: string[]): string[] {
@@ -171,13 +202,13 @@ export default class SupportTicketAIModuleService extends MedusaService({
       }
     }
 
-    return {
-      provider: map[PROVIDER_SETTING_KEY] ?? '',
+    return normalizeProviderConfig({
+      provider: map[PROVIDER_SETTING_KEY] ?? DEFAULT_AI_GATEWAY_PROVIDER,
       api_key: map[API_KEY_SETTING_KEY] ?? this.options_.openai_api_key ?? '',
       model: map[MODEL_SETTING_KEY] ?? this.options_.openai_model ?? '',
       base_url: map[BASE_URL_SETTING_KEY] ?? this.options_.openai_base_url ?? '',
       headers: this.options_.openai_headers,
-    }
+    })
   }
 
   async getPromptConfig(): Promise<Record<string, string>> {
@@ -262,7 +293,7 @@ export default class SupportTicketAIModuleService extends MedusaService({
       )
     }
 
-    const provider = createProvider(config, this.options_)
+    const provider = createProvider(config)
 
     this.cachedProvider = provider
     this.cachedConfigKey = configKey

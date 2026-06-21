@@ -49,9 +49,9 @@ The AI module does not ship with a default provider, model, or base URL. Configu
 {
   resolve: '@medusastore/medusa-plugin-support-tickets',
   options: {
-    openai_api_key: process.env.OPENAI_API_KEY,       // optional, overrides DB setting
+    openai_api_key: process.env.OPENROUTER_API_KEY,   // optional, overrides DB setting
     openai_model: process.env.OPENAI_MODEL,            // optional, overrides DB setting
-    openai_base_url: process.env.OPENAI_BASE_URL,      // optional, overrides DB setting
+    openai_base_url: process.env.AI_GATEWAY_URL,       // optional, overrides DB setting
   },
 }
 ```
@@ -64,9 +64,11 @@ Optional:
 
 - `DISCORD_WEBHOOK_URL` — Discord channel webhook for new ticket, customer reply, ticked closed, and escalation notifications.
 - `SUPPORT_TICKET_AI_KEY_ENCRYPTION_KEY` — high-entropy secret required before storing or reading AI provider API keys from the Admin UI. Persisted API keys must be encrypted with AES-256-GCM.
-- `OPENAI_API_KEY` — AI provider API key (runtime override, otherwise configured from admin).
+- `OPENROUTER_API_KEY`, `KILOCODE_API_KEY`, or `OPENAI_API_KEY` — shared AI provider API key (runtime override, otherwise configured from admin).
+- `AI_GATEWAY_URL` - shared OpenAI-compatible AI gateway base URL override.
+- `AI_GATEWAY_PROVIDER` - Portkey/local gateway provider route (defaults to `openrouter`).
 - `OPENAI_MODEL` - AI model name override.
-- `OPENAI_BASE_URL` - AI provider base URL override.
+- `OPENAI_BASE_URL` - fallback AI provider base URL override.
 
 ## Database
 
