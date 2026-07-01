@@ -42,6 +42,8 @@
   },
   "scripts": {
     "build": "medusa plugin:build && tsc",
+    "prepack": "corepack pnpm build",
+    "prepublishOnly": "corepack pnpm build",
     "dev": "medusa plugin:develop",
     "typecheck": "tsc --noEmit",
     "lint": "eslint \"src/**/*.ts\"",
