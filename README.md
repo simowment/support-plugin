@@ -91,14 +91,14 @@ The plugin creates the following tables:
 
 ### Store routes
 
-| Method | Path                          | Description                                                      |
-| ------ | ----------------------------- | ---------------------------------------------------------------- |
-| `GET`  | `/store/tickets`              | List customer's tickets (optional status filter)                 |
-| `POST` | `/store/tickets`              | Create a new ticket                                              |
-| `GET`  | `/store/tickets/:id`          | Get ticket with messages, events, and notes (ownership verified) |
-| `POST` | `/store/tickets/:id/messages` | Reply to a ticket (customer)                                     |
-| `GET`  | `/store/tickets/:id/events`   | SSE endpoint for real-time ticket updates                        |
-| `POST` | `/store/tickets/upload`       | Upload file attachments                                          |
+| Method | Path                          | Description                                                     |
+| ------ | ----------------------------- | --------------------------------------------------------------- |
+| `GET`  | `/store/tickets`              | List customer's tickets (optional status filter)                |
+| `POST` | `/store/tickets`              | Create a new ticket                                             |
+| `GET`  | `/store/tickets/:id`          | Get ticket, messages, and events; internal notes are admin-only |
+| `POST` | `/store/tickets/:id/messages` | Reply to a ticket (customer)                                    |
+| `GET`  | `/store/tickets/:id/events`   | SSE endpoint for real-time ticket updates                       |
+| `POST` | `/store/tickets/upload`       | Upload file attachments                                         |
 
 ### Admin routes
 
@@ -123,9 +123,9 @@ The plugin creates the following tables:
 
 ### Attachment routes
 
-| Method | Path                                                              | Description                                                                 |
-| ------ | ----------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `GET`  | `/support-tickets/tickets/:ticket_id/attachments/:file_id`        | Stream a private attachment after admin auth or customer ownership checking |
+| Method | Path                                                       | Description                                                                 |
+| ------ | ---------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `GET`  | `/support-tickets/tickets/:ticket_id/attachments/:file_id` | Stream a private attachment after admin auth or customer ownership checking |
 
 ### Modules
 
@@ -193,5 +193,3 @@ src/
 ## License
 
 MIT
-
-
