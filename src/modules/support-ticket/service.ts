@@ -54,6 +54,15 @@ type PaginationParams = {
   skip?: number
 }
 
+type ListAdminTicketsInput = {
+  status?: string
+  category?: string
+  customer_id?: string
+  assigned_to?: string
+  q?: string
+  tab?: 'active' | 'closed'
+}
+
 const UNREAD_REPLY_TICKET_LIMIT = 1000
 const UNREAD_REPLY_EVENT_LIMIT = 5000
 
@@ -397,6 +406,41 @@ export default class SupportTicketModuleService extends MedusaService({
       take: pagination?.take ?? 50,
       skip: pagination?.skip ?? 0,
     })
+  }
+
+  async listAdminTickets(input: ListAdminTicketsInput, pagination?: PaginationParams) {
+    const filters: Record<string, unknown> = {}
+
+    if (input.status) {
+      filters.status = input.status
+    } else if (input.tab === 'closed') {
+      filters.status = TicketStatus.CLOSED
+    } else if (input.tab === 'active') {
+      filters.status = { $ne: TicketStatus.CLOSED }
+    }
+
+    if (input.category) filters.category = input.category
+    if (input.customer_id) filters.customer_id = input.customer_id
+    if (input.assigned_to) filters.assigned_to = input.assigned_to
+
+    const search = input.q?.trim()
+    if (search) {
+      const likeSearch = `%${search.replace(/[%_\\]/g, '\\$&')}%`
+      filters.$or = [
+        { id: { $ilike: likeSearch } },
+        { subject: { $ilike: likeSearch } },
+        { customer_id: { $ilike: likeSearch } },
+        { order_id: { $ilike: likeSearch } },
+      ]
+    }
+
+    const [tickets, count] = await this.listAndCountTickets(filters, {
+      order: { created_at: 'DESC' },
+      take: pagination?.take ?? 50,
+      skip: pagination?.skip ?? 0,
+    })
+
+    return { tickets, count }
   }
 
   async getTicketWithMessages(ticketId: string) {

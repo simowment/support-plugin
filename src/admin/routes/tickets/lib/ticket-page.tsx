@@ -53,13 +53,7 @@ export type TicketDetails = {
   notes: TicketNote[]
 }
 
-export const STATUS_OPTIONS = [
-  'open',
-  'in_progress',
-  'waiting_customer',
-  'waiting_admin',
-  'closed',
-]
+export const STATUS_OPTIONS = ['open', 'in_progress', 'waiting_customer', 'waiting_admin', 'closed']
 
 export const ACTIVE_STATUS_OPTIONS = STATUS_OPTIONS.filter((status) => status !== 'closed')
 

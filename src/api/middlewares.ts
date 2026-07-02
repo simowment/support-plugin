@@ -68,6 +68,8 @@ export const ListAdminTicketsQuerySchema = paginationQuerySchema.extend({
   category: ticketCategorySchema.optional(),
   customer_id: z.string().min(1).optional(),
   assigned_to: z.string().min(1).optional(),
+  q: z.string().trim().min(1).max(200).optional(),
+  tab: z.enum(['active', 'closed']).optional(),
 })
 
 export const ListStoreTicketsQuerySchema = paginationQuerySchema.extend({
