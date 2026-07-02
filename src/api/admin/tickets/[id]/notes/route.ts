@@ -1,12 +1,9 @@
 import { AuthenticatedMedusaRequest, MedusaResponse } from '@medusajs/framework/http'
-import { resolveTicketService, requireAdminAuth, ticketNotFound } from '../../../../shared/helpers'
+import { resolveTicketService, ticketNotFound } from '../../../../shared/helpers'
 import type { TicketNoteBody } from '../../../../middlewares'
 
 // GET /admin/tickets/:id/notes
 export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) {
-  const adminId = requireAdminAuth(req, res)
-  if (!adminId) return
-
   const service = resolveTicketService(req)
   const notes = await service.listTicketNotes(
     { ticket: req.params.id },
@@ -17,8 +14,7 @@ export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) 
 
 // POST /admin/tickets/:id/notes
 export async function POST(req: AuthenticatedMedusaRequest<TicketNoteBody>, res: MedusaResponse) {
-  const adminId = requireAdminAuth(req, res)
-  if (!adminId) return
+  const adminId = req.auth_context.actor_id
 
   const { content } = req.validatedBody
 

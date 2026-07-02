@@ -1,7 +1,6 @@
 import { AuthenticatedMedusaRequest, MedusaResponse } from '@medusajs/framework/http'
 import {
   resolveTicketService,
-  requireAuth,
   ticketNotFound,
   sanitize,
   sendError,
@@ -11,8 +10,7 @@ import type { MessageBody } from '../../../../middlewares'
 import { attachTicketAttachmentUrls } from '../../../../shared/attachments'
 
 export async function POST(req: AuthenticatedMedusaRequest<MessageBody>, res: MedusaResponse) {
-  const customerId = requireAuth(req, res)
-  if (!customerId) return
+  const customerId = req.auth_context.actor_id
 
   const { message, attachments } = req.validatedBody
 

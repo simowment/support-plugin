@@ -1,13 +1,9 @@
 import { AuthenticatedMedusaRequest, MedusaResponse } from '@medusajs/framework/http'
-import { requireAdminAuth } from '../../../shared/helpers'
 import { ticketEventBus } from '../../../shared/event-bus'
 
 const HEARTBEAT_INTERVAL = 30_000
 
 export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) {
-  const adminId = requireAdminAuth(req, res)
-  if (!adminId) return
-
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',

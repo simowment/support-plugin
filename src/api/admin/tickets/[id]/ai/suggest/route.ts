@@ -9,13 +9,9 @@ import {
   SUPPORT_TICKET_AI_MODULE,
   MAX_HISTORY_MESSAGES,
 } from '../../../../../../modules/ai/constants'
-import { requireAdminAuth } from '../../../../../shared/helpers'
 
 // POST /admin/tickets/:id/ai/suggest — Generate a suggested AI response for a ticket
 export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse) {
-  const adminId = requireAdminAuth(req, res)
-  if (!adminId) return
-
   const { id } = req.params
   const aiService: SupportTicketAIModuleService = req.scope.resolve(SUPPORT_TICKET_AI_MODULE)
 

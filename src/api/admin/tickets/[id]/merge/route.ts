@@ -1,15 +1,13 @@
 import { AuthenticatedMedusaRequest, MedusaResponse } from '@medusajs/framework/http'
 import {
   resolveTicketService,
-  requireAdminAuth,
   sendError,
   getErrorMessage,
 } from '../../../../shared/helpers'
 import type { MergeTicketBody } from '../../../../middlewares'
 
 export async function POST(req: AuthenticatedMedusaRequest<MergeTicketBody>, res: MedusaResponse) {
-  const adminId = requireAdminAuth(req, res)
-  if (!adminId) return
+  const adminId = req.auth_context.actor_id
 
   const { source_ticket_id } = req.validatedBody
 

@@ -1,12 +1,9 @@
 import { AuthenticatedMedusaRequest, MedusaResponse } from '@medusajs/framework/http'
-import { resolveTicketService, requireAdminAuth, ticketNotFound } from '../../../shared/helpers'
+import { resolveTicketService, ticketNotFound } from '../../../shared/helpers'
 import { TicketStatus } from '../../../../modules/support-ticket'
 import type { UpdateTicketBody } from '../../../middlewares'
 
 export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) {
-  const adminId = requireAdminAuth(req, res)
-  if (!adminId) return
-
   const service = resolveTicketService(req)
   const result = await service.getTicketWithMessages(req.params.id)
   if (!result) return ticketNotFound(res)
@@ -14,8 +11,7 @@ export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) 
 }
 
 export async function POST(req: AuthenticatedMedusaRequest<UpdateTicketBody>, res: MedusaResponse) {
-  const adminId = requireAdminAuth(req, res)
-  if (!adminId) return
+  const adminId = req.auth_context.actor_id
 
   const { status, assigned_to } = req.validatedBody
   const service = resolveTicketService(req)
@@ -32,8 +28,7 @@ export async function POST(req: AuthenticatedMedusaRequest<UpdateTicketBody>, re
 
 export async function DELETE(req: AuthenticatedMedusaRequest, res: MedusaResponse) {
   const service = resolveTicketService(req)
-  const adminId = requireAdminAuth(req, res)
-  if (!adminId) return
+  const adminId = req.auth_context.actor_id
 
   const deleted = await service.deleteTicket(req.params.id, 'admin', adminId)
   if (!deleted) return ticketNotFound(res)

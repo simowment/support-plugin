@@ -1,7 +1,6 @@
 import { AuthenticatedMedusaRequest, MedusaResponse } from '@medusajs/framework/http'
 import {
   resolveTicketService,
-  requireAuth,
   parsePagination,
   sanitize,
   sendError,
@@ -10,8 +9,7 @@ import { TicketCategory } from '../../../modules/support-ticket'
 import type { CreateTicketBody, ListStoreTicketsQuery } from '../../middlewares'
 
 export async function POST(req: AuthenticatedMedusaRequest<CreateTicketBody>, res: MedusaResponse) {
-  const customerId = requireAuth(req, res)
-  if (!customerId) return
+  const customerId = req.auth_context.actor_id
 
   const { subject, category, message, order_id, metadata } = req.validatedBody
 
@@ -38,8 +36,7 @@ export async function GET(
   req: AuthenticatedMedusaRequest<unknown, ListStoreTicketsQuery>,
   res: MedusaResponse,
 ) {
-  const customerId = requireAuth(req, res)
-  if (!customerId) return
+  const customerId = req.auth_context.actor_id
 
   const service = resolveTicketService(req)
   const { take, skip } = parsePagination(req.validatedQuery)

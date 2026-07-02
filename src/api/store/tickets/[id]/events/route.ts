@@ -1,12 +1,11 @@
 import { AuthenticatedMedusaRequest, MedusaResponse } from '@medusajs/framework/http'
-import { resolveTicketService, requireAuth } from '../../../../shared/helpers'
+import { resolveTicketService } from '../../../../shared/helpers'
 import { ticketEventBus } from '../../../../shared/event-bus'
 
 const HEARTBEAT_INTERVAL = 30_000 // 30 seconds
 
 export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) {
-  const customerId = requireAuth(req, res)
-  if (!customerId) return
+  const customerId = req.auth_context.actor_id
 
   const ticketId = req.params.id
   const service = resolveTicketService(req)

@@ -1,4 +1,4 @@
-import { MedusaRequest, MedusaResponse, AuthenticatedMedusaRequest } from '@medusajs/framework/http'
+import { MedusaRequest, MedusaResponse } from '@medusajs/framework/http'
 import SupportTicketModuleService from '../../modules/support-ticket/service'
 import { SUPPORT_TICKET_MODULE, TicketStatus, TicketCategory } from '../../modules/support-ticket'
 
@@ -29,27 +29,6 @@ export const ALLOWED_MIME_TYPES = new Set([
 
 export function resolveTicketService(req: MedusaRequest): SupportTicketModuleService {
   return req.scope.resolve(SUPPORT_TICKET_MODULE)
-}
-
-export function requireAuth(req: AuthenticatedMedusaRequest, res: MedusaResponse): string | null {
-  const customerId = req.auth_context?.actor_id
-  if (!customerId) {
-    res.status(401).json({ success: false, code: 'UNAUTHORIZED', error: 'Authentication required' })
-    return null
-  }
-  return customerId
-}
-
-export function requireAdminAuth(
-  req: AuthenticatedMedusaRequest,
-  res: MedusaResponse,
-): string | null {
-  const adminId = req.auth_context?.actor_id
-  if (!adminId) {
-    res.status(401).json({ success: false, code: 'UNAUTHORIZED', error: 'Authentication required' })
-    return null
-  }
-  return adminId
 }
 
 type ValidatedPaginationQuery = {

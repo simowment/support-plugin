@@ -1,10 +1,9 @@
 import { AuthenticatedMedusaRequest, MedusaResponse } from '@medusajs/framework/http'
-import { requireAdminAuth, resolveTicketService } from '../../../shared/helpers'
+import { resolveTicketService } from '../../../shared/helpers'
 import type { BulkTicketBody } from '../../../middlewares'
 
 export async function POST(req: AuthenticatedMedusaRequest<BulkTicketBody>, res: MedusaResponse) {
-  const adminId = requireAdminAuth(req, res)
-  if (!adminId) return
+  const adminId = req.auth_context.actor_id
 
   const body = req.validatedBody
   const ticketIds = body.ticket_ids

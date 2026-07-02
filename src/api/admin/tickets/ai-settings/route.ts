@@ -2,13 +2,9 @@ import { AuthenticatedMedusaRequest, MedusaResponse } from '@medusajs/framework/
 import SupportTicketAIModuleService from '../../../../modules/ai/service'
 import { SUPPORT_TICKET_AI_MODULE } from '../../../../modules/ai/constants'
 import type { AISettingsBody } from '../../../middlewares'
-import { requireAdminAuth } from '../../../shared/helpers'
 
 // GET /admin/tickets/ai-settings
 export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) {
-  const adminId = requireAdminAuth(req, res)
-  if (!adminId) return
-
   const aiService: SupportTicketAIModuleService = req.scope.resolve(SUPPORT_TICKET_AI_MODULE)
 
   const [enabled, autoReplyEnabled, providerConfig, promptConfig] = await Promise.all([
@@ -34,9 +30,6 @@ export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) 
 
 // POST /admin/tickets/ai-settings
 export async function POST(req: AuthenticatedMedusaRequest<AISettingsBody>, res: MedusaResponse) {
-  const adminId = requireAdminAuth(req, res)
-  if (!adminId) return
-
   const aiService: SupportTicketAIModuleService = req.scope.resolve(SUPPORT_TICKET_AI_MODULE)
 
   const body = req.validatedBody
