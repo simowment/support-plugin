@@ -1,12 +1,7 @@
 import { AuthenticatedMedusaRequest, MedusaResponse } from '@medusajs/framework/http'
-import {
-  resolveTicketService,
-  requireAdminAuth,
-  ticketNotFound,
-  sendError,
-} from '../../../shared/helpers'
+import { resolveTicketService, requireAdminAuth, ticketNotFound } from '../../../shared/helpers'
 import { TicketStatus } from '../../../../modules/support-ticket'
-import { UpdateTicketSchema, type UpdateTicketBody } from '../../../middlewares'
+import type { UpdateTicketBody } from '../../../middlewares'
 
 export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) {
   const adminId = requireAdminAuth(req, res)
@@ -22,18 +17,7 @@ export async function POST(req: AuthenticatedMedusaRequest<UpdateTicketBody>, re
   const adminId = requireAdminAuth(req, res)
   if (!adminId) return
 
-  const validated = UpdateTicketSchema.safeParse(req.body)
-  if (!validated.success) {
-    return sendError(
-      res,
-      400,
-      'VALIDATION',
-      'Invalid ticket update payload',
-      validated.error.flatten(),
-    )
-  }
-
-  const { status, assigned_to } = validated.data
+  const { status, assigned_to } = req.validatedBody
   const service = resolveTicketService(req)
 
   const ticket = await service.updateTicket(

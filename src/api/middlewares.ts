@@ -50,9 +50,17 @@ const AttachmentSchema = z
   })
   .strict()
 
+const optionalNumberParam = (value: unknown) => {
+  if (value === undefined || value === null || (typeof value === 'string' && value.trim() === '')) {
+    return undefined
+  }
+
+  return Number(value)
+}
+
 const paginationQuerySchema = z.object({
-  limit: z.preprocess((value) => Number(value), z.number().int().min(1).max(100)).optional(),
-  offset: z.preprocess((value) => Number(value), z.number().int().min(0)).optional(),
+  limit: z.preprocess(optionalNumberParam, z.number().int().min(1).max(100).optional()),
+  offset: z.preprocess(optionalNumberParam, z.number().int().min(0).optional()),
 })
 
 export const ListAdminTicketsQuerySchema = paginationQuerySchema.extend({
@@ -122,6 +130,8 @@ export type CreateTicketBody = z.infer<typeof CreateTicketSchema>
 export type MessageBody = Omit<z.infer<typeof MessageSchema>, 'attachments'> & {
   attachments?: TicketAttachmentInput[]
 }
+export type ListAdminTicketsQuery = z.infer<typeof ListAdminTicketsQuerySchema>
+export type ListStoreTicketsQuery = z.infer<typeof ListStoreTicketsQuerySchema>
 export type UpdateTicketBody = z.infer<typeof UpdateTicketSchema>
 export type TicketNoteBody = z.infer<typeof TicketNoteSchema>
 export type MergeTicketBody = z.infer<typeof MergeTicketSchema>
@@ -147,6 +157,44 @@ const uploadTicketFiles = <Req extends MedusaRequest>(
   next: MedusaNextFunction,
 ) => multerUploadTicketFiles(req as never, res as never, next)
 
+const excludedAdminTicketUpdatePaths = new Set(['bulk', 'ai-settings', 'upload'])
+const validateUpdateTicketBody = validateAndTransformBody(UpdateTicketSchema)
+
+const getRequestPath = (req: MedusaRequest) => {
+  const request = req as MedusaRequest & {
+    originalUrl?: string
+    path?: string
+    url?: string
+  }
+  const path = (request.path ?? request.originalUrl ?? request.url ?? '').split('?')[0] ?? ''
+
+  return path.length > 1 ? path.replace(/\/+$/, '') : path
+}
+
+const isAdminTicketUpdatePath = (path: string) => {
+  const prefix = '/admin/tickets/'
+  if (!path.startsWith(prefix)) {
+    return false
+  }
+
+  const ticketId = path.slice(prefix.length)
+  return (
+    Boolean(ticketId) && !ticketId.includes('/') && !excludedAdminTicketUpdatePaths.has(ticketId)
+  )
+}
+
+const validateAdminTicketUpdateBody = (
+  req: MedusaRequest,
+  res: MedusaResponse,
+  next: MedusaNextFunction,
+) => {
+  if (!isAdminTicketUpdatePath(getRequestPath(req))) {
+    return next()
+  }
+
+  return validateUpdateTicketBody(req, res, next)
+}
+
 export default defineMiddlewares({
   routes: [
     {
@@ -168,6 +216,11 @@ export default defineMiddlewares({
       matcher: '/admin/tickets',
       method: 'GET',
       middlewares: [validateAndTransformQuery(ListAdminTicketsQuerySchema, {})],
+    },
+    {
+      matcher: '/admin/tickets/:id',
+      method: 'POST',
+      middlewares: [validateAdminTicketUpdateBody],
     },
     {
       matcher: '/admin/tickets/:id/messages',

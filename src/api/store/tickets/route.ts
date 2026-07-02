@@ -7,7 +7,7 @@ import {
   sendError,
 } from '../../shared/helpers'
 import { TicketCategory } from '../../../modules/support-ticket'
-import type { CreateTicketBody } from '../../middlewares'
+import type { CreateTicketBody, ListStoreTicketsQuery } from '../../middlewares'
 
 export async function POST(req: AuthenticatedMedusaRequest<CreateTicketBody>, res: MedusaResponse) {
   const customerId = requireAuth(req, res)
@@ -34,13 +34,16 @@ export async function POST(req: AuthenticatedMedusaRequest<CreateTicketBody>, re
   return res.status(201).json({ success: true, ticket })
 }
 
-export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) {
+export async function GET(
+  req: AuthenticatedMedusaRequest<unknown, ListStoreTicketsQuery>,
+  res: MedusaResponse,
+) {
   const customerId = requireAuth(req, res)
   if (!customerId) return
 
   const service = resolveTicketService(req)
-  const { take, skip } = parsePagination(req)
-  const status = req.validatedQuery.status as string | undefined
+  const { take, skip } = parsePagination(req.validatedQuery)
+  const { status } = req.validatedQuery
 
   const tickets = await service.listCustomerTickets(customerId, { status }, { take, skip })
   return res.json({ success: true, tickets })

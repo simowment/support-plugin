@@ -52,12 +52,14 @@ export function requireAdminAuth(
   return adminId
 }
 
-export function parsePagination(req: MedusaRequest) {
-  const rawLimit = parseInt(req.query['limit'] as string)
-  const limit =
-    Number.isFinite(rawLimit) && rawLimit > 0 && rawLimit <= 100 ? rawLimit : DEFAULT_LIMIT
-  const rawOffset = parseInt(req.query['offset'] as string)
-  const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? rawOffset : DEFAULT_OFFSET
+type ValidatedPaginationQuery = {
+  limit?: number
+  offset?: number
+}
+
+export function parsePagination(query: ValidatedPaginationQuery) {
+  const limit = query.limit ?? DEFAULT_LIMIT
+  const offset = query.offset ?? DEFAULT_OFFSET
   return { take: limit, skip: offset }
 }
 
