@@ -20,18 +20,18 @@ Medusa v2 plugin for customer support tickets. Provides a complete ticket manage
 
 ## Installation
 
-Add the plugin to your Medusa project:
+This plugin is distributed as a GitHub release asset and is not published to npm. Download the `.tgz` from the
+[releases page](https://github.com/simowment/support-plugin/releases) and install it:
 
 ```bash
-# pnpm
-pnpm add @medusastore/medusa-plugin-support-tickets
+# from a downloaded file
+pnpm add ./medusastore-medusa-plugin-support-tickets-0.0.1.tgz
 
-# npm
-npm install @medusastore/medusa-plugin-support-tickets
-
-# bun
-bun add @medusastore/medusa-plugin-support-tickets
+# or straight from the release URL
+pnpm add https://github.com/simowment/support-plugin/releases/download/v0.0.1/medusastore-medusa-plugin-support-tickets-0.0.1.tgz
 ```
+
+The shared `@medusastore/shared-config` package is bundled inside the tarball; nothing else needs to be installed.
 
 ## Configuration
 

@@ -6,12 +6,12 @@
   "types": ".medusa/server/src/index.d.ts",
   "repository": {
     "type": "git",
-    "url": "https://github.com/medusastore/medusa-plugin-support-tickets.git"
+    "url": "git+https://github.com/simowment/support-plugin.git"
   },
   "bugs": {
-    "url": "https://github.com/medusastore/medusa-plugin-support-tickets/issues"
+    "url": "https://github.com/simowment/support-plugin/issues"
   },
-  "homepage": "https://github.com/medusastore/medusa-plugin-support-tickets#readme",
+  "homepage": "https://github.com/simowment/support-plugin#readme",
   "exports": {
     "./package.json": "./package.json",
     "./modules/*": "./.medusa/server/src/modules/*/index.js",
