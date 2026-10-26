@@ -105,7 +105,8 @@ export default class SupportTicketModuleService extends MedusaService({
 
   // ── Private helpers ──────────────────────────────────────────────
 
-  private async getTicketById(ticketId: string): Promise<TicketRecord | null> {
+  /** Canonical ticket read, shared with workflows. */
+  async getTicketById(ticketId: string): Promise<TicketRecord | null> {
     const [ticket] = await this.listTickets({ id: ticketId }, { take: 1 })
     return (ticket as TicketRecord) ?? null
   }
