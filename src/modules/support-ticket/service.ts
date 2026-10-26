@@ -482,15 +482,17 @@ export default class SupportTicketModuleService extends MedusaService({
       throw new Error('Tickets can only be merged when they belong to the same customer.')
     }
 
-    // Move messages from source to target
+    // Move messages from source to target. Write the foreign key directly:
+    // `ticket` is a relation, and an update payload carrying the relation is
+    // accepted and then dropped, leaving the row on the source ticket.
     const messages = await this.listTicketMessages({ ticket: sourceTicketId }, { take: 1000 })
     await this.updateTicketMessages(
-      messages.map((message) => ({ id: message.id, ticket: targetTicketId })),
+      messages.map((message) => ({ id: message.id, ticket_id: targetTicketId })),
     )
 
     // Move notes from source to target
     const notes = await this.listTicketNotes({ ticket: sourceTicketId }, { take: 1000 })
-    await this.updateTicketNotes(notes.map((note) => ({ id: note.id, ticket: targetTicketId })))
+    await this.updateTicketNotes(notes.map((note) => ({ id: note.id, ticket_id: targetTicketId })))
 
     // Mark source closed and record merge in metadata
     await this.updateTickets([

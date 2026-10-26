@@ -4,7 +4,7 @@ import {
   StepResponse,
   WorkflowResponse,
 } from '@medusajs/framework/workflows-sdk'
-import { MedusaError } from '@medusajs/framework/utils'
+import { ContainerRegistrationKeys, MedusaError } from '@medusajs/framework/utils'
 import { SUPPORT_TICKET_MODULE, type TicketStatus } from '../modules/support-ticket'
 import type SupportTicketModuleService from '../modules/support-ticket/service'
 
@@ -36,6 +36,39 @@ type MergeTicketsCompensation = {
 const MAX_ROWS_MOVED = 1000
 
 /**
+ * Undo a merge: rows return to the source, the source reopens, and both
+ * metadata snapshots are restored.
+ */
+async function restoreMerge(
+  service: SupportTicketModuleService,
+  snapshot: MergeTicketsCompensation,
+) {
+  if (snapshot.messageIds.length > 0) {
+    await service.updateTicketMessages(
+      snapshot.messageIds.map((id) => ({ id, ticket_id: snapshot.sourceTicketId })),
+    )
+  }
+  if (snapshot.noteIds.length > 0) {
+    await service.updateTicketNotes(
+      snapshot.noteIds.map((id) => ({ id, ticket_id: snapshot.sourceTicketId })),
+    )
+  }
+
+  await service.updateTickets([
+    {
+      id: snapshot.sourceTicketId,
+      status: snapshot.sourceStatus as TicketStatus,
+      closed_at: snapshot.sourceClosedAt,
+      metadata: snapshot.sourceMetadata,
+    },
+    {
+      id: snapshot.targetTicketId,
+      metadata: snapshot.targetMetadata,
+    },
+  ])
+}
+
+/**
  * Merge one ticket into another.
  *
  * `mergeTickets` moves messages and notes, closes the source and stamps both
@@ -64,14 +97,7 @@ const mergeTicketsStep = createStep(
       service.listTicketNotes({ ticket: source.id }, { take: MAX_ROWS_MOVED }),
     ])
 
-    const result = await service.mergeTickets(
-      source.id,
-      target.id,
-      input.performedByType,
-      input.performedById,
-    )
-
-    return new StepResponse<MergeTicketsOutput, MergeTicketsCompensation>(result, {
+    const snapshot: MergeTicketsCompensation = {
       sourceTicketId: source.id,
       targetTicketId: target.id,
       messageIds: messages.map((message) => message.id),
@@ -82,36 +108,37 @@ const mergeTicketsStep = createStep(
       targetMetadata: (target.metadata as Record<string, unknown> | null) ?? {},
       performedByType: input.performedByType,
       performedById: input.performedById,
-    })
+    }
+
+    try {
+      const result = await service.mergeTickets(
+        source.id,
+        target.id,
+        input.performedByType,
+        input.performedById,
+      )
+      return new StepResponse<MergeTicketsOutput, MergeTicketsCompensation>(result, snapshot)
+    } catch (error) {
+      // mergeTickets writes in sequence, so a throw part-way leaves rows moved.
+      // The engine only compensates steps that returned, so undo it here.
+      const logger = container.resolve<{ error: (message: string) => void }>(
+        ContainerRegistrationKeys.LOGGER,
+      )
+      await restoreMerge(service, snapshot).catch((restoreError) => {
+        logger.error(
+          `[support-tickets] Failed to undo a partial merge of ${source.id} into ${target.id}: ${
+            (restoreError as Error).message
+          }`,
+        )
+      })
+      throw error
+    }
   },
   async (compensation: MergeTicketsCompensation | undefined, { container }) => {
     if (!compensation) return
 
     const service = container.resolve<SupportTicketModuleService>(SUPPORT_TICKET_MODULE)
-
-    if (compensation.messageIds.length > 0) {
-      await service.updateTicketMessages(
-        compensation.messageIds.map((id) => ({ id, ticket: compensation.sourceTicketId })),
-      )
-    }
-    if (compensation.noteIds.length > 0) {
-      await service.updateTicketNotes(
-        compensation.noteIds.map((id) => ({ id, ticket: compensation.sourceTicketId })),
-      )
-    }
-
-    await service.updateTickets([
-      {
-        id: compensation.sourceTicketId,
-        status: compensation.sourceStatus as TicketStatus,
-        closed_at: compensation.sourceClosedAt,
-        metadata: compensation.sourceMetadata,
-      },
-      {
-        id: compensation.targetTicketId,
-        metadata: compensation.targetMetadata,
-      },
-    ])
+    await restoreMerge(service, compensation)
   },
 )
 
