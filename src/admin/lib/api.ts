@@ -1,10 +1,8 @@
 import { sdk } from './sdk'
 
-type JsonBody = Record<string, unknown> | unknown[] | string | number | boolean | null
-
 type FetchOptions = {
   method?: string
-  body?: BodyInit | JsonBody
+  body?: BodyInit | Record<string, unknown> | null
 }
 
 export async function adminFetch<T>(path: string, options: FetchOptions = {}): Promise<T> {

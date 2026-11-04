@@ -16,7 +16,9 @@ export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) 
     id: string
     subject: string
     status: string
-    customer_id: string
+    customer_id: string | null
+    contact_email: string | null
+    contact_name: string | null
     updated_at: string | Date
   }>
 
@@ -29,6 +31,8 @@ export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) 
       subject: t.subject,
       status: t.status,
       customer_id: t.customer_id,
+      contact_email: t.contact_email,
+      contact_name: t.contact_name,
       updated_at: new Date(t.updated_at).toISOString(),
     })),
   })

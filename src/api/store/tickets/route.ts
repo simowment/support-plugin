@@ -1,10 +1,6 @@
 import { AuthenticatedMedusaRequest, MedusaResponse } from '@medusajs/framework/http'
-import {
-  resolveTicketService,
-  parsePagination,
-  sanitize,
-  sendError,
-} from '../../shared/helpers'
+import { ContainerRegistrationKeys } from '@medusajs/framework/utils'
+import { resolveTicketService, parsePagination, sanitize, sendError } from '../../shared/helpers'
 import { TicketCategory } from '../../../modules/support-ticket'
 import type { CreateTicketBody, ListStoreTicketsQuery } from '../../middlewares'
 
@@ -18,6 +14,16 @@ export async function POST(req: AuthenticatedMedusaRequest<CreateTicketBody>, re
 
   if (!cleanSubject) return sendError(res, 400, 'VALIDATION', 'Subject must contain text.')
   if (!cleanMessage) return sendError(res, 400, 'VALIDATION', 'Message must contain text.')
+
+  if (order_id) {
+    const query = req.scope.resolve(ContainerRegistrationKeys.QUERY)
+    const { data: orders } = await query.graph({
+      entity: 'order',
+      fields: ['id'],
+      filters: { id: order_id, customer_id: customerId },
+    })
+    if (!orders.length) return sendError(res, 404, 'NOT_FOUND', 'Order not found.')
+  }
 
   const service = resolveTicketService(req)
   const ticket = await service.createTicket({

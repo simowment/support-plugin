@@ -88,7 +88,12 @@ export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse)
     })
 
     const autoReplyEnabled = await aiService.isAutoReplyEnabled()
-    if (autoReplyEnabled && aiService.shouldAutoReply(analysis) && analysis.suggested_response) {
+    if (
+      ticket.customer_id &&
+      autoReplyEnabled &&
+      aiService.shouldAutoReply(analysis) &&
+      analysis.suggested_response
+    ) {
       const didMark = await aiService.markAutoReplied(analysis.id)
       if (didMark) {
         await ticketService.addMessage({

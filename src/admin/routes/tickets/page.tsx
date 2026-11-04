@@ -31,7 +31,7 @@ import { formatLabel } from './lib/format'
 import { AiAssistantTab } from './components/AiAssistantTab'
 import { AiSettingsDrawer } from './components/AiSettingsDrawer'
 import { ContextPanel } from './components/ContextPanel'
-import { IntelligencePanel } from './components/IntelligencePanel'
+import { GuestEmailReplyPanel } from './components/GuestEmailReplyPanel'
 import {
   STATUS_OPTIONS,
   ACTIVE_STATUS_OPTIONS,
@@ -40,7 +40,6 @@ import {
   TICKETS_POLL_MS,
   DETAILS_POLL_MS,
   formatDate,
-  isClosedStatus,
   displayStatus,
   statusColor,
   normalizeAttachments,
@@ -248,7 +247,7 @@ export default function SupportTicketsPage() {
   )
 
   const sendReply = async () => {
-    if (!selectedTicketId) return
+    if (!selectedTicketId || !selectedTicket?.customer_id) return
     if (!reply.trim() && pendingAttachments.length === 0) return
     setSaving(true)
     try {
@@ -405,7 +404,13 @@ export default function SupportTicketsPage() {
 
   useEffect(() => {
     const customerId = selectedTicket?.customer_id
-    if (!customerId) return
+    if (!customerId) {
+      setCustomerName(selectedTicket?.contact_name ?? null)
+      setCustomerEmail(selectedTicket?.contact_email ?? null)
+      setCustomerTickets([])
+      setAssignedToInput(selectedTicket?.assigned_to ?? '')
+      return
+    }
     let cancelled = false
     void (async () => {
       await Promise.all([fetchCustomer(customerId), fetchCustomerTickets(customerId)])
@@ -571,7 +576,9 @@ export default function SupportTicketsPage() {
                       <div className="flex min-w-0 items-center gap-1.5">
                         <User className="h-3.5 w-3.5 flex-shrink-0" />
                         <Text size="xsmall" className="truncate">
-                          {ticket.customer_id.split('_').pop()}
+                          {ticket.customer_id
+                            ? ticket.customer_id.split('_').pop()
+                            : ticket.contact_name || ticket.contact_email || 'Email guest'}
                         </Text>
                       </div>
                       <Text size="xsmall">{formatTime(ticket.updated_at)}</Text>
@@ -771,6 +778,15 @@ export default function SupportTicketsPage() {
                           <Text>No messages yet.</Text>
                         </div>
                       )}
+                      {selectedTicket &&
+                        !selectedTicket.customer_id &&
+                        selectedTicket.contact_email && (
+                          <GuestEmailReplyPanel
+                            key={selectedTicket.id}
+                            ticketId={selectedTicket.id}
+                            recipient={selectedTicket.contact_email}
+                          />
+                        )}
                     </div>
                   )}
 
@@ -875,143 +891,145 @@ export default function SupportTicketsPage() {
                 </div>
 
                 {/* Reply Footer */}
-                <div className="px-4 pb-4 lg:px-8 lg:pb-8">
-                  <div className="bg-ui-bg-base flex flex-col overflow-hidden rounded-3xl border shadow-xl">
-                    {analysis && (
-                      <div className="bg-ui-bg-subtle/30 animate-in fade-in slide-in-from-top-2 flex items-center justify-between border-b px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          <Sparkles className="text-ui-fg-interactive h-5 w-5" />
-                          <div>
-                            <Text size="small" weight="plus">
-                              AI Smart Suggestion
-                            </Text>
-                            <Text size="xsmall" className="text-ui-fg-subtle">
-                              Confidence: {Math.round((analysis.response_confidence || 0) * 100)}%
-                            </Text>
+                {selectedTicket?.customer_id && (
+                  <div className="px-4 pb-4 lg:px-8 lg:pb-8">
+                    <div className="bg-ui-bg-base flex flex-col overflow-hidden rounded-3xl border shadow-xl">
+                      {analysis && (
+                        <div className="bg-ui-bg-subtle/30 animate-in fade-in slide-in-from-top-2 flex items-center justify-between border-b px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <Sparkles className="text-ui-fg-interactive h-5 w-5" />
+                            <div>
+                              <Text size="small" weight="plus">
+                                AI Smart Suggestion
+                              </Text>
+                              <Text size="xsmall" className="text-ui-fg-subtle">
+                                Confidence: {Math.round((analysis.response_confidence || 0) * 100)}%
+                              </Text>
+                            </div>
                           </div>
-                        </div>
-                        <Button
-                          variant="secondary"
-                          size="small"
-                          className="h-8 gap-1.5"
-                          onClick={() => setReply(analysis.suggested_response || '')}
-                        >
-                          Use Suggestion <ChevronRight className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    )}
-
-                    <div className="space-y-4 p-6">
-                      <div className="flex flex-col gap-4 lg:flex-row">
-                        <div className="flex-1">
-                          <Textarea
-                            placeholder="Type your reply to the customer..."
-                            rows={4}
-                            value={reply}
-                            onChange={(e) => setReply(e.target.value)}
-                            className="bg-ui-bg-subtle/50 border-ui-border-base focus:border-ui-fg-interactive resize-none text-base leading-relaxed"
-                          />
-                        </div>
-                        <div className="w-full space-y-3 lg:w-[240px]">
-                          <Label className="text-ui-fg-subtle text-[10px] font-bold tracking-widest uppercase">
-                            Quick Actions
-                          </Label>
-                          <Select
-                            onValueChange={(v) =>
-                              setReply((prev) => (prev ? `${prev}\n\n${v}` : v))
-                            }
-                          >
-                            <Select.Trigger className="h-9">
-                              <Select.Value placeholder="Canned Responses" />
-                            </Select.Trigger>
-                            <Select.Content>
-                              {CANNED_RESPONSES.map((r) => (
-                                <Select.Item key={r.label} value={r.value}>
-                                  {r.label}
-                                </Select.Item>
-                              ))}
-                            </Select.Content>
-                          </Select>
                           <Button
                             variant="secondary"
-                            className="h-9 w-full gap-2"
-                            onClick={() => fileInputRef.current?.click()}
-                            isLoading={uploadingFiles}
+                            size="small"
+                            className="h-8 gap-1.5"
+                            onClick={() => setReply(analysis.suggested_response || '')}
                           >
-                            <PaperClip className="h-4 w-4" /> Attach Files
+                            Use Suggestion <ChevronRight className="h-3 w-3" />
                           </Button>
-                          <input
-                            ref={fileInputRef}
-                            type="file"
-                            multiple
-                            className="hidden"
-                            onChange={(e) => e.target.files && uploadFiles(e.target.files)}
-                          />
-                        </div>
-                      </div>
-
-                      {pendingAttachments.length > 0 && (
-                        <div className="flex flex-wrap gap-2 pt-2">
-                          {pendingAttachments.map((a, i) => (
-                            <Badge
-                              key={a.url || a.filename || String(i)}
-                              size="small"
-                              className="gap-1.5 pr-1"
-                            >
-                              {a.filename}
-                              <button
-                                type="button"
-                                aria-label={`Remove attachment ${a.filename}`}
-                                onClick={() =>
-                                  setPendingAttachments((p) => p.filter((_, idx) => idx !== i))
-                                }
-                                className="hover:text-ui-fg-base text-ui-fg-subtle"
-                              >
-                                ×
-                              </button>
-                            </Badge>
-                          ))}
                         </div>
                       )}
 
-                      <div className="border-ui-border-base flex items-center justify-between border-t pt-4">
-                        <div className="flex items-center gap-6">
-                          <div className="flex flex-col">
-                            <Text
-                              size="xsmall"
-                              className="text-ui-fg-subtle tracking-tighter uppercase"
-                            >
-                              Status after reply
-                            </Text>
+                      <div className="space-y-4 p-6">
+                        <div className="flex flex-col gap-4 lg:flex-row">
+                          <div className="flex-1">
+                            <Textarea
+                              placeholder="Type your reply to the customer..."
+                              rows={4}
+                              value={reply}
+                              onChange={(e) => setReply(e.target.value)}
+                              className="bg-ui-bg-subtle/50 border-ui-border-base focus:border-ui-fg-interactive resize-none text-base leading-relaxed"
+                            />
+                          </div>
+                          <div className="w-full space-y-3 lg:w-[240px]">
+                            <Label className="text-ui-fg-subtle text-[10px] font-bold tracking-widest uppercase">
+                              Quick Actions
+                            </Label>
                             <Select
-                              value={selectedTicket.status}
-                              onValueChange={(s) => updateTicket({ status: s })}
+                              onValueChange={(v) =>
+                                setReply((prev) => (prev ? `${prev}\n\n${v}` : v))
+                              }
                             >
-                              <Select.Trigger className="hover:text-ui-fg-base text-ui-fg-interactive h-6 w-fit border-none bg-transparent p-0 shadow-none transition-colors">
-                                <Select.Value />
+                              <Select.Trigger className="h-9">
+                                <Select.Value placeholder="Canned Responses" />
                               </Select.Trigger>
                               <Select.Content>
-                                {STATUS_OPTIONS.map((s) => (
-                                  <Select.Item key={s} value={s}>
-                                    {formatLabel(s)}
+                                {CANNED_RESPONSES.map((r) => (
+                                  <Select.Item key={r.label} value={r.value}>
+                                    {r.label}
                                   </Select.Item>
                                 ))}
                               </Select.Content>
                             </Select>
+                            <Button
+                              variant="secondary"
+                              className="h-9 w-full gap-2"
+                              onClick={() => fileInputRef.current?.click()}
+                              isLoading={uploadingFiles}
+                            >
+                              <PaperClip className="h-4 w-4" /> Attach Files
+                            </Button>
+                            <input
+                              ref={fileInputRef}
+                              type="file"
+                              multiple
+                              className="hidden"
+                              onChange={(e) => e.target.files && uploadFiles(e.target.files)}
+                            />
                           </div>
                         </div>
-                        <Button
-                          className="shadow-ui-fg-interactive/20 h-11 rounded-2xl px-8 shadow-lg transition-all hover:translate-y-[-1px] active:translate-y-[0px]"
-                          onClick={sendReply}
-                          disabled={(!reply.trim() && pendingAttachments.length === 0) || saving}
-                          isLoading={saving}
-                        >
-                          Send Response
-                        </Button>
+
+                        {pendingAttachments.length > 0 && (
+                          <div className="flex flex-wrap gap-2 pt-2">
+                            {pendingAttachments.map((a, i) => (
+                              <Badge
+                                key={a.url || a.filename || String(i)}
+                                size="small"
+                                className="gap-1.5 pr-1"
+                              >
+                                {a.filename}
+                                <button
+                                  type="button"
+                                  aria-label={`Remove attachment ${a.filename}`}
+                                  onClick={() =>
+                                    setPendingAttachments((p) => p.filter((_, idx) => idx !== i))
+                                  }
+                                  className="hover:text-ui-fg-base text-ui-fg-subtle"
+                                >
+                                  ×
+                                </button>
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="border-ui-border-base flex items-center justify-between border-t pt-4">
+                          <div className="flex items-center gap-6">
+                            <div className="flex flex-col">
+                              <Text
+                                size="xsmall"
+                                className="text-ui-fg-subtle tracking-tighter uppercase"
+                              >
+                                Status after reply
+                              </Text>
+                              <Select
+                                value={selectedTicket.status}
+                                onValueChange={(s) => updateTicket({ status: s })}
+                              >
+                                <Select.Trigger className="hover:text-ui-fg-base text-ui-fg-interactive h-6 w-fit border-none bg-transparent p-0 shadow-none transition-colors">
+                                  <Select.Value />
+                                </Select.Trigger>
+                                <Select.Content>
+                                  {STATUS_OPTIONS.map((s) => (
+                                    <Select.Item key={s} value={s}>
+                                      {formatLabel(s)}
+                                    </Select.Item>
+                                  ))}
+                                </Select.Content>
+                              </Select>
+                            </div>
+                          </div>
+                          <Button
+                            className="shadow-ui-fg-interactive/20 h-11 rounded-2xl px-8 shadow-lg transition-all hover:translate-y-[-1px] active:translate-y-[0px]"
+                            onClick={sendReply}
+                            disabled={(!reply.trim() && pendingAttachments.length === 0) || saving}
+                            isLoading={saving}
+                          >
+                            Send Response
+                          </Button>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
+                )}
               </div>
             </>
           )}

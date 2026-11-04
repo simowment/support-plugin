@@ -1,11 +1,7 @@
 import { AuthenticatedMedusaRequest, MedusaResponse } from '@medusajs/framework/http'
 import type { IFileModuleService } from '@medusajs/framework/types'
 import { Modules } from '@medusajs/framework/utils'
-import {
-  resolveTicketService,
-  sendError,
-  ticketNotFound,
-} from '../../../../../shared/helpers'
+import { resolveTicketService, sendError, ticketNotFound } from '../../../../../shared/helpers'
 import { findMessageAttachment } from '../../../../../shared/attachments'
 
 const ADMIN_ACTOR_TYPE = 'user'
@@ -22,7 +18,8 @@ export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) 
 
   if (!result) return ticketNotFound(res)
 
-  const isAdmin = req.auth_context.actor_type === ADMIN_ACTOR_TYPE
+  const isAdmin =
+    req.auth_context.actor_type === ADMIN_ACTOR_TYPE || req.auth_context.actor_type === 'api-key'
   if (!isAdmin && result.ticket.customer_id !== req.auth_context.actor_id) {
     return ticketNotFound(res)
   }
@@ -38,6 +35,12 @@ export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) 
   res.setHeader(CACHE_CONTROL_HEADER, CACHE_CONTROL_PRIVATE)
   res.setHeader(CONTENT_TYPE_HEADER, attachment.mimeType)
   res.setHeader(CONTENT_LENGTH_HEADER, buffer.byteLength.toString())
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  const filename = encodeURIComponent(attachment.filename).replace(
+    /['()*]/g,
+    (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  )
+  res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${filename}`)
 
   return res.send(buffer)
 }

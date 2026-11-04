@@ -18,4 +18,12 @@ export { Ticket } from './models/ticket'
 export { TicketMessage } from './models/ticket-message'
 export { TicketEvent } from './models/ticket-event'
 export { TicketNote } from './models/ticket-note'
+export { InboundEmailReceipt } from './models/inbound-email-receipt'
+export { EmailReplyToken } from './models/email-reply-token'
+export { OutboundEmailDraft } from './models/outbound-email-draft'
 export type { default as SupportTicketModuleService } from './service'
+export type {
+  InboundEmailAttachment,
+  ReceiveInboundEmailInput,
+  ReceiveInboundEmailResult,
+} from './service'

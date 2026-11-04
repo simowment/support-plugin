@@ -4,7 +4,9 @@ export type Ticket = {
   category: string
   status: string
   assigned_to: string | null
-  customer_id: string
+  customer_id: string | null
+  contact_email: string | null
+  contact_name: string | null
   order_id: string | null
   closed_at: string | null
   created_at: string

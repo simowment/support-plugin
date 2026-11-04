@@ -16,6 +16,7 @@ import {
   MESSAGE_MAX_LENGTH,
 } from './shared/helpers'
 import type { TicketAttachmentInput } from './shared/attachments'
+import { mailgunInboundMiddlewares } from './hooks/mailgun/inbound/middlewares'
 
 const SUBJECT_MAX_LENGTH = 200
 const PROMPT_MAX_LENGTH = 10_000
@@ -101,6 +102,18 @@ export const UpdateTicketSchema = z.object({
 export const TicketNoteSchema = z.object({
   content: z.string().trim().min(1).max(MESSAGE_MAX_LENGTH),
 })
+export const GuestEmailDraftSchema = z.object({
+  draft_id: z.string().min(1).optional(),
+  expected_revision: z.number().int().positive().optional(),
+  client_id: z
+    .string()
+    .regex(/^ted_[a-zA-Z0-9_-]{16,100}$/)
+    .optional(),
+  body: z.string().trim().min(1).max(MESSAGE_MAX_LENGTH),
+})
+export const SendGuestEmailDraftSchema = z.object({
+  expected_revision: z.number().int().positive(),
+})
 
 export const MergeTicketSchema = z.object({
   source_ticket_id: z.string().trim().min(1),
@@ -161,6 +174,23 @@ const uploadTicketFiles = <Req extends MedusaRequest>(
 
 const excludedAdminTicketUpdatePaths = new Set(['bulk', 'ai-settings', 'upload'])
 const validateUpdateTicketBody = validateAndTransformBody(UpdateTicketSchema)
+const authenticateAttachmentKey = authenticate('user', ['api-key'])
+const authenticateAttachmentAccount = authenticate(['user', 'customer'], ['session', 'bearer'])
+
+function authenticateTicketAttachment(
+  req: MedusaRequest,
+  res: MedusaResponse,
+  next: MedusaNextFunction,
+) {
+  // Medusa accepts secret API keys only for an exclusively-user actor matcher.
+  // Keep customer sessions on the mixed-actor branch and verify ownership in the handler.
+  const header = req.headers.authorization
+  const authenticateRequest =
+    typeof header === 'string' && /^Basic\s/i.test(header)
+      ? authenticateAttachmentKey
+      : authenticateAttachmentAccount
+  return authenticateRequest(req as never, res, next)
+}
 
 const getRequestPath = (req: MedusaRequest) => {
   const request = req as MedusaRequest & {
@@ -199,6 +229,7 @@ const validateAdminTicketUpdateBody = (
 
 export default defineMiddlewares({
   routes: [
+    ...mailgunInboundMiddlewares,
     {
       matcher: '/admin/tickets*',
       method: ['GET', 'POST', 'DELETE'],
@@ -212,7 +243,7 @@ export default defineMiddlewares({
     {
       matcher: '/support-tickets/tickets/:ticket_id/attachments/:file_id',
       method: 'GET',
-      middlewares: [authenticate(['user', 'customer'], ['session', 'bearer', 'api-key'])],
+      middlewares: [authenticateTicketAttachment],
     },
     {
       matcher: '/admin/tickets',
@@ -228,6 +259,16 @@ export default defineMiddlewares({
       matcher: '/admin/tickets/:id/messages',
       method: 'POST',
       middlewares: [validateAndTransformBody(MessageSchema)],
+    },
+    {
+      matcher: '/admin/tickets/:id/email-drafts',
+      method: 'POST',
+      middlewares: [validateAndTransformBody(GuestEmailDraftSchema)],
+    },
+    {
+      matcher: '/admin/tickets/email-drafts/:draft_id/send',
+      method: 'POST',
+      middlewares: [validateAndTransformBody(SendGuestEmailDraftSchema)],
     },
     {
       matcher: '/admin/tickets/:id/notes',

@@ -15,6 +15,7 @@ type TicketCreatedEventData = {
   customer_id: string
   order_id: string | null
   message: string
+  channel?: string
 }
 
 type MessageAddedEventData = {
@@ -35,6 +36,9 @@ export default async function handleAiTicketEvents({
 
   if (name === TicketEventName.CREATED) {
     const ticketData = data as TicketCreatedEventData
+    if (ticketData.channel === 'email') {
+      return
+    }
     try {
       // Guard: skip stale events for tickets that no longer exist (e.g. after test cleanup)
       const [ticketResult, enabled] = await Promise.all([
