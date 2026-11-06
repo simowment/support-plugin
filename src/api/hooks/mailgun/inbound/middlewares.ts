@@ -9,6 +9,7 @@ import {
   ALLOWED_MIME_TYPES,
   MAX_FILE_SIZE_BYTES,
   MAX_FILES_PER_MESSAGE,
+  resolveTicketService,
 } from '../../../shared/helpers'
 import { MAX_INBOUND_BYTES } from './payload'
 
@@ -34,7 +35,7 @@ export function parseInboundEmail(
   res: MedusaResponse,
   next: MedusaNextFunction,
 ) {
-  if (process.env.SUPPORT_MAILGUN_INBOUND_ENABLED !== 'true') {
+  if (!resolveTicketService(req).getConfig().mailgunInboundEnabled) {
     return res.status(503).json({ message: 'Support email ingestion is not enabled' })
   }
   const length = req.headers['content-length']

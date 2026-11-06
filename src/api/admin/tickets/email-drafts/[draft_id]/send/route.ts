@@ -20,6 +20,14 @@ export async function POST(req: AuthenticatedMedusaRequest<Body>, res: MedusaRes
       'A human admin session is required to send email',
     )
   const service = resolveTicketService(req)
+  const queueKey = service.getConfig().emailQueueModule
+  if (!req.scope.hasRegistration(queueKey))
+    return sendError(
+      res,
+      503,
+      'EMAIL_QUEUE_NOT_CONFIGURED',
+      'No email queue is registered; guest email replies cannot be sent',
+    )
   try {
     let draft = await service.getGuestEmailDraft(req.params.draft_id)
     if (!draft) return sendError(res, 404, 'DRAFT_NOT_FOUND', 'Draft not found')
@@ -28,7 +36,7 @@ export async function POST(req: AuthenticatedMedusaRequest<Body>, res: MedusaRes
       req.validatedBody.expected_revision,
       req.auth_context.actor_id,
     )
-    const queue = req.scope.resolve<Queue>('emailQueue')
+    const queue = req.scope.resolve<Queue>(queueKey)
     let job = await queue.getJobByIdempotencyKey(String(draft.idempotency_key))
     if (!job) {
       if (draft.status !== 'sending')

@@ -1,6 +1,10 @@
 import { SubscriberArgs, type SubscriberConfig } from '@medusajs/framework'
 import type { Logger } from '@medusajs/framework/types'
-import { TicketEventName } from '../modules/support-ticket'
+import {
+  SUPPORT_TICKET_MODULE,
+  TicketEventName,
+  type SupportTicketModuleService,
+} from '../modules/support-ticket'
 import { ticketEventBus } from '../api/shared/event-bus'
 import { getErrorMessage } from '../api/shared/helpers'
 
@@ -56,12 +60,11 @@ function buildDiscordFields(data: TicketNotificationData) {
 
 async function sendDiscordWebhook(
   logger: Logger,
-  event: string,
+  webhookUrl: string | undefined,
   data: TicketNotificationData,
   title: string,
   color: number,
 ) {
-  const webhookUrl = process.env.DISCORD_WEBHOOK_URL
   if (!webhookUrl) return
 
   const fields = buildDiscordFields(data)
@@ -93,6 +96,8 @@ export default async function ticketNotificationHandler({
   container,
 }: SubscriberArgs<TicketNotificationData>) {
   const logger = container.resolve('logger')
+  const ticketService: SupportTicketModuleService = container.resolve(SUPPORT_TICKET_MODULE)
+  const webhookUrl = ticketService.getConfig().discordWebhookUrl
 
   logger.info(`[Support Tickets] Event: ${name} ticket=${data.id || data.ticket_id}`)
 
@@ -102,7 +107,7 @@ export default async function ticketNotificationHandler({
   switch (name) {
     case TicketEventName.CREATED:
       ticketEventBus.emit({ ticketId, type: 'status_changed', payload: { status: 'open' } })
-      await sendDiscordWebhook(logger, name, data, '🎫 New Support Ticket', 0x3b82f6)
+      await sendDiscordWebhook(logger, webhookUrl, data, '🎫 New Support Ticket', 0x3b82f6)
       break
 
     case TicketEventName.MESSAGE_ADDED:
@@ -112,7 +117,7 @@ export default async function ticketNotificationHandler({
         payload: { senderType: data.sender_type },
       })
       if (data.sender_type === 'customer') {
-        await sendDiscordWebhook(logger, name, data, '💬 New Customer Reply', 0xf59e0b)
+        await sendDiscordWebhook(logger, webhookUrl, data, '💬 New Customer Reply', 0xf59e0b)
       }
       break
 
@@ -126,7 +131,7 @@ export default async function ticketNotificationHandler({
 
     case TicketEventName.CLOSED:
       ticketEventBus.emit({ ticketId, type: 'status_changed', payload: { status: 'closed' } })
-      await sendDiscordWebhook(logger, name, data, '✅ Ticket Closed', 0x22c55e)
+      await sendDiscordWebhook(logger, webhookUrl, data, '✅ Ticket Closed', 0x22c55e)
       break
   }
 }

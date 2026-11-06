@@ -20,8 +20,15 @@ function truncateAtWord(description: string, maxLength: number): string {
   return truncated + '…'
 }
 
-export async function sendEscalation(payload: EscalationPayload, logger?: Logger): Promise<void> {
-  const webhookUrl = process.env.DISCORD_WEBHOOK_URL
+/**
+ * Posts an AI escalation to a Discord-compatible webhook. No-op when no webhook URL is
+ * configured (`discord_webhook_url` option or DISCORD_WEBHOOK_URL).
+ */
+export async function sendEscalation(
+  payload: EscalationPayload,
+  logger: Logger | undefined,
+  webhookUrl: string | undefined,
+): Promise<void> {
   if (!webhookUrl) {
     return
   }

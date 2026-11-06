@@ -8,6 +8,7 @@ import {
   type KeyObject,
 } from 'crypto'
 import { SUPPORT_TICKET_AI_KEY_ENCRYPTION_KEY } from './constants'
+import { resolveAiKeyEncryptionSecret } from '../../lib/config'
 
 const ENCRYPTED_SECRET_PREFIX = 'enc:v1'
 const ENCRYPTED_SECRET_SEPARATOR = ':'
@@ -18,15 +19,15 @@ const ENCRYPTION_IV_BYTES = 12
 const ENCRYPTION_KEY_HASH_ALGORITHM = 'sha256'
 const SECRET_TEXT_ENCODING = 'utf8'
 const SECRET_VALUE_ENCODING = 'base64'
-const MISSING_STORE_SECRET_MESSAGE = `${SUPPORT_TICKET_AI_KEY_ENCRYPTION_KEY} is required before storing support ticket AI API keys in the database.`
-const MISSING_READ_SECRET_MESSAGE = `${SUPPORT_TICKET_AI_KEY_ENCRYPTION_KEY} is required to read persisted support ticket AI settings.`
+const MISSING_STORE_SECRET_MESSAGE = `${SUPPORT_TICKET_AI_KEY_ENCRYPTION_KEY} (or the api_key_encryption_key module option) is required before storing support ticket AI API keys in the database.`
+const MISSING_READ_SECRET_MESSAGE = `${SUPPORT_TICKET_AI_KEY_ENCRYPTION_KEY} (or the api_key_encryption_key module option) is required to read persisted support ticket AI settings.`
 export const INVALID_ENCRYPTED_SECRET_MESSAGE =
   'Persisted support ticket AI API key is not a valid encrypted secret.'
 
 type EncryptionPurpose = 'read' | 'store'
 
-function resolveEncryptionKey(purpose: EncryptionPurpose): KeyObject {
-  const secret = process.env[SUPPORT_TICKET_AI_KEY_ENCRYPTION_KEY]?.trim()
+function resolveEncryptionKey(purpose: EncryptionPurpose, configuredSecret?: string): KeyObject {
+  const secret = configuredSecret?.trim() || resolveAiKeyEncryptionSecret()
 
   if (!secret) {
     throw new MedusaError(
@@ -46,8 +47,8 @@ function assertEncryptedSecretParts(parts: string[]): void {
   }
 }
 
-export function encryptApiKey(apiKey: string): string {
-  const key = resolveEncryptionKey('store')
+export function encryptApiKey(apiKey: string, secret?: string): string {
+  const key = resolveEncryptionKey('store', secret)
   const iv = randomBytes(ENCRYPTION_IV_BYTES)
   const cipher = createCipheriv(ENCRYPTION_ALGORITHM, key, Uint8Array.from(iv), {
     authTagLength: ENCRYPTION_AUTH_TAG_BYTES,
@@ -65,13 +66,13 @@ export function encryptApiKey(apiKey: string): string {
   ].join(ENCRYPTED_SECRET_SEPARATOR)
 }
 
-export function decryptApiKey(storedValue?: string | null): string | undefined {
+export function decryptApiKey(storedValue?: string | null, secret?: string): string | undefined {
   if (storedValue === undefined || storedValue === null) return undefined
   if (!storedValue.startsWith(`${ENCRYPTED_SECRET_PREFIX}${ENCRYPTED_SECRET_SEPARATOR}`)) {
     throw new MedusaError(MedusaError.Types.INVALID_DATA, INVALID_ENCRYPTED_SECRET_MESSAGE)
   }
 
-  const key = resolveEncryptionKey('read')
+  const key = resolveEncryptionKey('read', secret)
   const parts = storedValue.split(ENCRYPTED_SECRET_SEPARATOR)
   assertEncryptedSecretParts(parts)
 

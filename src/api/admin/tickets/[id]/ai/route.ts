@@ -114,6 +114,7 @@ export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse)
           message: firstCustomerMessage.message,
         },
         logger,
+        ticketService.getConfig().discordWebhookUrl,
       )
     }
 

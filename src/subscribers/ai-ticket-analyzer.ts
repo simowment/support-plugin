@@ -58,6 +58,13 @@ export default async function handleAiTicketEvents({
         return
       }
 
+      if (!(await aiService.isProviderConfigured())) {
+        logger.info(
+          `[support-ticket-ai] AI provider is not configured, skipping analysis for ticket ${ticketData.id}`,
+        )
+        return
+      }
+
       logger.info(`[support-ticket-ai] Analyzing ticket ${ticketData.id}`)
 
       const analysis = await aiService.analyzeTicket({
@@ -96,6 +103,7 @@ export default async function handleAiTicketEvents({
             message: ticketData.message,
           },
           logger,
+          ticketService.getConfig().discordWebhookUrl,
         )
       }
     } catch (error) {
@@ -117,7 +125,7 @@ export default async function handleAiTicketEvents({
         aiService.getAnalysisForTicket(messageData.ticket_id),
       ])
 
-      if (!enabled) {
+      if (!enabled || !(await aiService.isProviderConfigured())) {
         return
       }
 
@@ -179,6 +187,7 @@ export default async function handleAiTicketEvents({
             message: messageData.message,
           },
           logger,
+          ticketService.getConfig().discordWebhookUrl,
         )
       }
     } catch (error) {

@@ -10,6 +10,11 @@ import { EmailReplyToken } from './models/email-reply-token'
 import { OutboundEmailDraft } from './models/outbound-email-draft'
 import { buildTicketAttachmentUrl } from '../../api/shared/attachments'
 import {
+  resolveSupportTicketConfig,
+  type ResolvedSupportTicketConfig,
+  type SupportTicketModuleOptions,
+} from '../../lib/config'
+import {
   TicketStatus,
   TicketEventType,
   TicketEventName,
@@ -165,12 +170,23 @@ export default class SupportTicketModuleService extends MedusaService({
   private logger_: Logger
   private container_: Record<string, unknown> & { resolve?: (key: string) => unknown }
 
-  constructor(container: Record<string, unknown> & { logger?: Logger }) {
+  private config_: ResolvedSupportTicketConfig
+
+  constructor(
+    container: Record<string, unknown> & { logger?: Logger },
+    options?: SupportTicketModuleOptions,
+  ) {
     super(...arguments)
     this.container_ = container as Record<string, unknown> & { resolve?: (key: string) => unknown }
     const eventBusService = container[Modules.EVENT_BUS]
     this.eventBusService_ = isEventBusService(eventBusService) ? eventBusService : undefined
     this.logger_ = container.logger ?? (console as unknown as Logger)
+    this.config_ = resolveSupportTicketConfig(options ?? {})
+  }
+
+  /** Resolved module configuration (options with environment fallbacks). */
+  getConfig(): ResolvedSupportTicketConfig {
+    return this.config_
   }
 
   private getPgConnection(): KnexConnection {
@@ -688,7 +704,7 @@ export default class SupportTicketModuleService extends MedusaService({
     )
       throw new Error('Guest ticket recipient changed')
     const token = await this.issueGuestEmailReplyToken(ticket.id)
-    const domain = process.env.SUPPORT_REPLY_EMAIL_DOMAIN?.trim().toLowerCase()
+    const domain = this.config_.replyEmailDomain
     if (!domain || !/^[a-z0-9.-]+$/.test(domain))
       throw new Error('Support reply email domain is not configured')
     const replyTo = `reply+${token.replyToken}@${domain}`

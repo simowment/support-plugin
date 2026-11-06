@@ -22,24 +22,13 @@ import {
   type OpenAIProviderConfig,
 } from './providers/openai-provider'
 import { ActionDecisionSchema } from './validation'
+import { decryptApiKey, encryptApiKey, isInvalidEncryptedApiKeyError } from './api-key-encryption'
 import {
-  decryptApiKey,
-  encryptApiKey,
-  isInvalidEncryptedApiKeyError,
-} from './api-key-encryption'
-
-type AiGatewayHelper = {
-  DEFAULT_AI_GATEWAY_PROVIDER: 'openrouter'
-  resolvePortkeyGatewayHeaders: (input: {
-    baseUrl?: string
-    headers?: Record<string, string>
-    provider?: string
-  }) => Record<string, string>
-}
-
-const { DEFAULT_AI_GATEWAY_PROVIDER, resolvePortkeyGatewayHeaders } = require(
-  '@medusastore/shared-config/ai-gateway',
-) as AiGatewayHelper
+  DEFAULT_AI_PROVIDER,
+  resolveAiKeyEncryptionSecret,
+  resolveGatewayHeaders,
+  type SupportTicketAiModuleOptions,
+} from '../../lib/config'
 
 type AnalysisRecord = {
   id: string
@@ -87,10 +76,13 @@ const ModuleOptionsSchema = z
     openai_model: z.string().min(1).optional(),
     openai_base_url: z.string().url().optional(),
     openai_headers: z.record(z.string()).optional(),
+    default_provider: z.string().min(1).optional(),
+    api_key_encryption_key: z.string().min(1).optional(),
+    portkey_gateway_markers: z.array(z.string().min(1)).optional(),
   })
   .passthrough()
 
-type ModuleOptions = z.infer<typeof ModuleOptionsSchema>
+type ModuleOptions = z.infer<typeof ModuleOptionsSchema> & SupportTicketAiModuleOptions
 
 // Registry of provider factories — adding a new LLM backend is a one-entry change.
 const PROVIDER_REGISTRY: Record<string, (config: OpenAIProviderConfig) => AIProvider> = {
@@ -105,7 +97,7 @@ function preserveProviderSettingValue(value: string): string {
 
 const PROVIDER_SETTING_VALUE_READERS: Record<
   ProviderSettingKey,
-  (value: string) => string | undefined
+  (value: string, secret?: string) => string | undefined
 > = {
   [PROVIDER_SETTING_KEY]: preserveProviderSettingValue,
   [API_KEY_SETTING_KEY]: decryptApiKey,
@@ -113,7 +105,10 @@ const PROVIDER_SETTING_VALUE_READERS: Record<
   [BASE_URL_SETTING_KEY]: preserveProviderSettingValue,
 }
 
-const PROVIDER_SETTING_VALUE_WRITERS: Record<ProviderSettingKey, (value: string) => string> = {
+const PROVIDER_SETTING_VALUE_WRITERS: Record<
+  ProviderSettingKey,
+  (value: string, secret?: string) => string
+> = {
   [PROVIDER_SETTING_KEY]: preserveProviderSettingValue,
   [API_KEY_SETTING_KEY]: encryptApiKey,
   [MODEL_SETTING_KEY]: preserveProviderSettingValue,
@@ -130,8 +125,12 @@ function createProvider(config: AIProviderConfig): AIProvider {
   })
 }
 
-function normalizeProviderConfig(config: ProviderConfig): ProviderConfig {
-  const provider = config.provider.trim() || DEFAULT_AI_GATEWAY_PROVIDER
+function normalizeProviderConfig(
+  config: ProviderConfig,
+  defaultProvider: string,
+  gatewayMarkers?: string[],
+): ProviderConfig {
+  const provider = config.provider.trim() || defaultProvider
   const baseUrl = config.base_url.trim()
 
   return {
@@ -140,12 +139,22 @@ function normalizeProviderConfig(config: ProviderConfig): ProviderConfig {
     api_key: config.api_key.trim(),
     model: config.model.trim(),
     base_url: baseUrl,
-    headers: resolvePortkeyGatewayHeaders({
+    headers: resolveGatewayHeaders({
       baseUrl,
       headers: config.headers,
       provider,
+      markers: gatewayMarkers,
     }),
   }
+}
+
+function getMissingProviderKeys(config: ProviderConfig): ProviderSettingKey[] {
+  return PROVIDER_KEYS.filter((key) => key !== API_KEY_SETTING_KEY || !config.api_key).filter(
+    (key) => {
+      const value = config[key]
+      return typeof value !== 'string' || value.trim().length === 0
+    },
+  )
 }
 
 function limitHistory(history: string[]): string[] {
@@ -166,7 +175,15 @@ export default class SupportTicketAIModuleService extends MedusaService({
   constructor(container: { logger?: Logger }, options?: ModuleOptions) {
     super(...arguments)
     this.logger_ = container.logger ?? (console as unknown as Logger)
-    this.options_ = ModuleOptionsSchema.parse(options ?? {})
+    this.options_ = ModuleOptionsSchema.parse(options ?? {}) as ModuleOptions
+  }
+
+  private get defaultProvider_(): string {
+    return this.options_.default_provider?.trim() || DEFAULT_AI_PROVIDER
+  }
+
+  private get encryptionSecret_(): string | undefined {
+    return resolveAiKeyEncryptionSecret(this.options_)
   }
 
   // --- Provider config ---
@@ -178,7 +195,7 @@ export default class SupportTicketAIModuleService extends MedusaService({
 
   private readProviderSetting(setting: AISettingRecord): string | undefined {
     try {
-      return PROVIDER_SETTING_VALUE_READERS[setting.key](setting.value)
+      return PROVIDER_SETTING_VALUE_READERS[setting.key](setting.value, this.encryptionSecret_)
     } catch (error) {
       if (setting.key === API_KEY_SETTING_KEY && isInvalidEncryptedApiKeyError(error)) {
         this.logger_.warn(
@@ -202,13 +219,17 @@ export default class SupportTicketAIModuleService extends MedusaService({
       }
     }
 
-    return normalizeProviderConfig({
-      provider: map[PROVIDER_SETTING_KEY] ?? DEFAULT_AI_GATEWAY_PROVIDER,
-      api_key: map[API_KEY_SETTING_KEY] ?? this.options_.openai_api_key ?? '',
-      model: map[MODEL_SETTING_KEY] ?? this.options_.openai_model ?? '',
-      base_url: map[BASE_URL_SETTING_KEY] ?? this.options_.openai_base_url ?? '',
-      headers: this.options_.openai_headers,
-    })
+    return normalizeProviderConfig(
+      {
+        provider: map[PROVIDER_SETTING_KEY] ?? this.defaultProvider_,
+        api_key: map[API_KEY_SETTING_KEY] ?? this.options_.openai_api_key ?? '',
+        model: map[MODEL_SETTING_KEY] ?? this.options_.openai_model ?? '',
+        base_url: map[BASE_URL_SETTING_KEY] ?? this.options_.openai_base_url ?? '',
+        headers: this.options_.openai_headers,
+      },
+      this.defaultProvider_,
+      this.options_.portkey_gateway_markers,
+    )
   }
 
   async getPromptConfig(): Promise<Record<string, string>> {
@@ -251,7 +272,7 @@ export default class SupportTicketAIModuleService extends MedusaService({
     for (const key of PROVIDER_KEYS) {
       const value = config[key]
       if (value === undefined) continue
-      const storedValue = PROVIDER_SETTING_VALUE_WRITERS[key](String(value))
+      const storedValue = PROVIDER_SETTING_VALUE_WRITERS[key](String(value), this.encryptionSecret_)
 
       const [existing] = await this.listAISettings({ key }, { take: 1 })
       if (existing) {
@@ -272,6 +293,11 @@ export default class SupportTicketAIModuleService extends MedusaService({
     return this.getProviderConfig()
   }
 
+  /** True when provider, API key, model and base URL are all available. */
+  async isProviderConfigured(): Promise<boolean> {
+    return getMissingProviderKeys(await this.getProviderConfig()).length === 0
+  }
+
   async getProvider(): Promise<AIProvider> {
     const config = await this.getProviderConfig()
     const configKey = this.getConfigKey(config)
@@ -280,11 +306,7 @@ export default class SupportTicketAIModuleService extends MedusaService({
       return this.cachedProvider
     }
 
-    const missingKeys = PROVIDER_KEYS.filter((key) => key !== API_KEY_SETTING_KEY || !config.api_key)
-      .filter((key) => {
-        const value = config[key]
-        return typeof value !== 'string' || value.trim().length === 0
-      })
+    const missingKeys = getMissingProviderKeys(config)
 
     if (missingKeys.length > 0) {
       throw new MedusaError(

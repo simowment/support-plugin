@@ -1,194 +1,263 @@
 # Medusa Support Tickets Plugin
 
-Medusa v2 plugin for customer support tickets. Provides a complete ticket management system with customer-facing submission and messaging, admin triage workflows, internal notes, file attachments, AI-powered analysis with auto-reply, Discord notifications, and real-time updates via server-sent events.
+Customer support tickets for Medusa v2. Customers open and follow tickets from the storefront, staff triage them from a
+Medusa Admin inbox, and inbound email (Mailgun) can open guest tickets that staff answer by email. AI triage
+(analysis, suggested replies, optional auto-reply and escalation) is optional and works with any OpenAI-compatible
+endpoint.
 
 ## Features
 
-- Customer-authenticated store API for ticket creation, status tracking, and messaging.
-- Admin-authenticated API for ticket triage, status transitions, replies, internal notes, merging, and bulk operations.
-- Full event history for every ticket action (created, status change, assignment, merge, deletion) with audit trail.
-- File upload with MIME type validation (images, PDF, text, CSV, Office documents), 10 MB per file, max 5 files per message.
-- Configurable AI module with pluggable LLM providers (OpenAI, OpenRouter, custom) for ticket analysis, auto-reply, and escalation detection.
-- Auto-reply with confidence threshold (≥85%), blocked categories for sensitive topics (refund, payment, fraud, legal, etc.).
-- Escalation detection via AI tool calls with Discord webhook alerts.
-- Optional Discord webhook notifications for new tickets, customer replies, and ticket closure.
-- Server-sent events for real-time ticket updates in both admin and customer views.
-- Medusa Admin page for ticket management (`/app/tickets`, split-panel UI) with inline AI Assistant tab and AI configuration drawer.
-- Ticket merging (same customer only) with message/note migration and audit events.
-- Internal notes (admin-only, not visible to customers).
-- 6 ticket categories: order issue, return, fulfillment, product inquiry, payment, general.
+- Customer-authenticated store API: create tickets, list own tickets, reply, live updates over server-sent events (SSE).
+- Admin API and inbox page: filter/search, reply, change status, assign, internal notes, merge (same customer), bulk
+  updates, delete, full event history.
+- Private file attachments (images, PDF, text, CSV, Office documents), 10 MB per file, up to 5 files per message,
+  validated by MIME magic bytes and served only to admins or the owning customer.
+- Optional Mailgun inbound email: signed webhook opens guest tickets from configured mailboxes and threads guest
+  replies through one-time `reply+<token>@<domain>` addresses.
+- Guest email replies: staff write a draft, review it and send it through an email queue module (see
+  [Guest email replies](#guest-email-replies)).
+- Optional AI module: ticket analysis, suggested responses, auto-reply gated by a confidence threshold (0.85) and
+  blocked categories (refund, payment, chargeback, fraud, legal, complaint, shipping_issue), escalation detection.
+  Provider, model, base URL, API key and prompts are editable from the Admin.
+- Optional Discord-compatible webhook notifications for new tickets, customer replies, closures and AI escalations.
+
+## Compatibility
+
+| Requirement | Version                                                                      |
+| ----------- | ---------------------------------------------------------------------------- |
+| Medusa      | `@medusajs/framework`, `@medusajs/medusa`, `@medusajs/core-flows` **2.21.2** |
+| Node.js     | `>=20.19.0`                                                                  |
+| Database    | PostgreSQL (the module uses the Medusa PG connection for inbound email)      |
+| React       | `^18` (Admin extension)                                                      |
+
+Medusa's Cache and Locking modules must be available (they are by default); the inbound email route uses them for
+replay protection.
 
 ## Installation
 
-This plugin is distributed as a GitHub release asset and is not published to npm. Download the `.tgz` from the
-[releases page](https://github.com/simowment/support-plugin/releases) and install it:
-
 ```bash
-# from a downloaded file
-pnpm add ./medusastore-medusa-plugin-support-tickets-0.0.1.tgz
-
-# or straight from the release URL
-pnpm add https://github.com/simowment/support-plugin/releases/download/v0.0.1/medusastore-medusa-plugin-support-tickets-0.0.1.tgz
+pnpm add @medusastore/medusa-plugin-support-tickets
 ```
 
-The shared `@medusastore/shared-config` package is bundled inside the tarball; nothing else needs to be installed.
+Until the package is on npm, install a release tarball from
+[the releases page](https://github.com/simowment/support-plugin/releases) instead
+(`pnpm add ./medusastore-medusa-plugin-support-tickets-<version>.tgz`).
+
+Register the plugin in `medusa-config.ts`:
+
+```ts
+module.exports = defineConfig({
+  // ...
+  plugins: [
+    {
+      resolve: '@medusastore/medusa-plugin-support-tickets',
+      options: {},
+    },
+  ],
+})
+```
+
+The plugin ships two modules, `supportTicket` (`modules/support-ticket`) and `supportTicketAi` (`modules/ai`). Medusa
+registers them automatically from the plugin. If you register them explicitly (for example in a workspace setup where
+plugin modules are not auto-registered), pass module options there:
+
+```ts
+modules: [
+  {
+    resolve: '@medusastore/medusa-plugin-support-tickets/modules/support-ticket',
+    options: {
+      mailgun_inbound_enabled: true,
+      mailgun_webhook_signing_key: process.env.MAILGUN_WEBHOOK_SIGNING_KEY,
+      inbound_recipients: ['support@example.com'],
+      reply_email_domain: 'reply.example.com',
+      discord_webhook_url: process.env.SUPPORT_DISCORD_WEBHOOK,
+    },
+  },
+  {
+    resolve: '@medusastore/medusa-plugin-support-tickets/modules/ai',
+    options: {
+      openai_api_key: process.env.MY_AI_KEY,
+      openai_model: 'gpt-4o-mini',
+      openai_base_url: 'https://api.openai.com/v1',
+      api_key_encryption_key: process.env.SUPPORT_TICKET_AI_KEY_ENCRYPTION_KEY,
+    },
+  },
+]
+```
+
+Then run the migrations (see below) and restart Medusa.
 
 ## Configuration
 
-Register the plugin in `medusa-config.ts`. No options are required for the core ticketing features.
+No option is required for core ticketing. All configuration is resolved in `src/lib/config.ts`; an environment
+variable is read only when the matching option is unset.
 
-```ts
-{
-  resolve: '@medusastore/medusa-plugin-support-tickets',
-}
-```
+### `supportTicket` module options
 
-The AI module does not ship with a default provider, model, or base URL. Configure AI at runtime from the Admin AI Support page, or provide startup overrides from your backend environment.
+| Option                        | Env fallback                      | Default        | Description                                                                                                                                     |
+| ----------------------------- | --------------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mailgun_inbound_enabled`     | `SUPPORT_MAILGUN_INBOUND_ENABLED` | `false`        | Enables `POST /hooks/mailgun/inbound`. The env fallback must be exactly `true`. When disabled the route answers `503`.                          |
+| `mailgun_webhook_signing_key` | `MAILGUN_WEBHOOK_SIGNING_KEY`     | none           | Mailgun HTTP webhook signing key. Without it inbound requests are rejected with `503`.                                                          |
+| `inbound_recipients`          | `SUPPORT_INBOUND_RECIPIENTS`      | `[]`           | Mailboxes (array, or comma-separated string) whose mail opens new guest tickets. Other recipients are rejected unless they are reply addresses. |
+| `reply_email_domain`          | `SUPPORT_REPLY_EMAIL_DOMAIN`      | none           | Domain for `reply+<token>@<domain>` guest reply addresses. Required to receive guest replies and to send guest email drafts.                    |
+| `discord_webhook_url`         | `DISCORD_WEBHOOK_URL`             | none           | Discord-compatible webhook for new ticket, customer reply, closed and escalation messages. Unset means no webhook calls.                        |
+| `email_queue_module`          | none                              | `"emailQueue"` | Container key of the email queue used to send guest email replies.                                                                              |
 
-```ts
-{
-  resolve: '@medusastore/medusa-plugin-support-tickets',
-  options: {
-    openai_api_key: process.env.OPENROUTER_API_KEY,   // optional, overrides DB setting
-    openai_model: process.env.OPENAI_MODEL,            // optional, overrides DB setting
-    openai_base_url: process.env.AI_GATEWAY_URL,       // optional, overrides DB setting
-  },
-}
-```
+### `supportTicketAi` module options
 
-## Environment variables
+Admin-saved settings (AI Settings drawer) take precedence over these options; the options are fallbacks.
 
-Copy `.env.example` and fill in your values.
+| Option                    | Env fallback                           | Default                         | Description                                                                                                     |
+| ------------------------- | -------------------------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `openai_api_key`          | none                                   | none                            | API key for an OpenAI-compatible endpoint.                                                                      |
+| `openai_model`            | none                                   | none                            | Model id.                                                                                                       |
+| `openai_base_url`         | none                                   | none                            | OpenAI-compatible base URL (must be a valid URL).                                                               |
+| `openai_headers`          | none                                   | `{}`                            | Extra HTTP headers sent with every AI request.                                                                  |
+| `default_provider`        | none                                   | `"openrouter"`                  | Provider label used when none is saved in the Admin (all labels use the OpenAI-compatible client).              |
+| `api_key_encryption_key`  | `SUPPORT_TICKET_AI_KEY_ENCRYPTION_KEY` | none                            | Secret used to encrypt API keys saved from the Admin (AES-256-GCM). Required before a key can be saved or read. |
+| `portkey_gateway_markers` | none                                   | Portkey hosts (see `config.ts`) | Base URL fragments treated as a Portkey gateway; matching requests get an `x-portkey-provider` header.          |
 
-Optional:
+The plugin itself does not read AI provider environment variables (such as `OPENAI_API_KEY`); map your own variables
+to the options above. See `.env.example` for the environment fallbacks.
 
-- `DISCORD_WEBHOOK_URL` — Discord channel webhook for new ticket, customer reply, ticked closed, and escalation notifications.
-- `SUPPORT_TICKET_AI_KEY_ENCRYPTION_KEY` — high-entropy secret required before storing or reading AI provider API keys from the Admin UI. Persisted API keys must be encrypted with AES-256-GCM.
-- `OPENROUTER_API_KEY`, `KILOCODE_API_KEY`, or `OPENAI_API_KEY` — shared AI provider API key (runtime override, otherwise configured from admin).
-- `AI_GATEWAY_URL` - shared OpenAI-compatible AI gateway base URL override.
-- `AI_GATEWAY_PROVIDER` - Portkey/local gateway provider route (defaults to `openrouter`).
-- `OPENAI_MODEL` - AI model name override.
-- `OPENAI_BASE_URL` - fallback AI provider base URL override.
-
-## Database
-
-Run migrations after installing or changing plugin models.
+## Database / migrations
 
 ```bash
-pnpm medusa db:migrate
+npx medusa db:migrate
 ```
 
-The plugin creates the following tables:
+| Table                          | Model                 | Purpose                                                        |
+| ------------------------------ | --------------------- | -------------------------------------------------------------- |
+| `ticket`                       | `Ticket`              | Ticket subject, category, status, customer or guest contact.   |
+| `ticket_message`               | `TicketMessage`       | Messages with sender type and attachment descriptors.          |
+| `ticket_event`                 | `TicketEvent`         | Audit trail (status, assignment, merge, delete, email events). |
+| `ticket_note`                  | `TicketNote`          | Internal admin notes.                                          |
+| `ticket_inbound_email_receipt` | `InboundEmailReceipt` | Idempotency records for inbound email.                         |
+| `ticket_email_reply_token`     | `EmailReplyToken`     | Hashed one-time guest reply tokens.                            |
+| `ticket_outbound_email_draft`  | `OutboundEmailDraft`  | Reviewed guest email replies and their queue status.           |
+| `ai_setting`                   | `AISetting`           | AI provider, prompt and flag settings (key/value).             |
+| `ai_ticket_analysis`           | `AITicketAnalysis`    | AI analysis results per ticket.                                |
 
-- `ticket` — Support tickets with subject, category, status, customer, assignment, order reference.
-- `ticket_message` — Messages on tickets with sender type, content, and optional attachments.
-- `ticket_event` — Audit events (status changes, assignments, merges, deletions).
-- `ticket_note` — Internal admin notes.
-- `ai_setting` — AI provider and prompt configuration (key-value pairs).
-- `ai_ticket_analysis` — AI analysis results per ticket.
+Ticket statuses: `open`, `in_progress`, `waiting_customer`, `waiting_admin`, `closed` (a new message reopens a closed
+ticket). Categories: `order_issue`, `return_request`, `fulfillment_issue`, `product_inquiry`, `payment_issue`,
+`general`.
 
-## API surface
+## API routes
 
-### Store routes
+### Store (customer session or bearer token)
 
-| Method | Path                          | Description                                                     |
-| ------ | ----------------------------- | --------------------------------------------------------------- |
-| `GET`  | `/store/tickets`              | List customer's tickets (optional status filter)                |
-| `POST` | `/store/tickets`              | Create a new ticket                                             |
-| `GET`  | `/store/tickets/:id`          | Get ticket, messages, and events; internal notes are admin-only |
-| `POST` | `/store/tickets/:id/messages` | Reply to a ticket (customer)                                    |
-| `GET`  | `/store/tickets/:id/events`   | SSE endpoint for real-time ticket updates                       |
-| `POST` | `/store/tickets/upload`       | Upload file attachments                                         |
+| Method | Path                          | Purpose                                                                              |
+| ------ | ----------------------------- | ------------------------------------------------------------------------------------ |
+| `GET`  | `/store/tickets`              | List the customer's tickets (optional `status`, paging).                             |
+| `POST` | `/store/tickets`              | Create a ticket (`subject`, `category`, `message`, optional `order_id`, `metadata`). |
+| `GET`  | `/store/tickets/:id`          | Ticket with messages and events (no internal notes).                                 |
+| `POST` | `/store/tickets/:id/messages` | Customer reply with optional attachments.                                            |
+| `GET`  | `/store/tickets/:id/events`   | SSE stream for that ticket (ownership checked).                                      |
+| `POST` | `/store/tickets/upload`       | Upload attachments (multipart).                                                      |
 
-### Admin routes
+### Admin (user session, bearer token or secret API key)
 
-| Method   | Path                           | Description                                                        |
-| -------- | ------------------------------ | ------------------------------------------------------------------ |
-| `GET`    | `/admin/tickets`               | List tickets (filters: status, category, customer_id, assigned_to) |
-| `GET`    | `/admin/tickets/:id`           | Get full ticket details with messages, events, notes               |
-| `POST`   | `/admin/tickets/:id`           | Update ticket (status, assigned_to)                                |
-| `DELETE` | `/admin/tickets/:id`           | Delete ticket and associated data                                  |
-| `POST`   | `/admin/tickets/:id/messages`  | Reply as admin                                                     |
-| `GET`    | `/admin/tickets/:id/notes`     | List internal notes                                                |
-| `POST`   | `/admin/tickets/:id/notes`     | Add internal note                                                  |
-| `POST`   | `/admin/tickets/:id/merge`     | Merge source ticket into this ticket (same customer only)          |
-| `POST`   | `/admin/tickets/bulk`          | Bulk update tickets (status, assignment)                           |
-| `GET`    | `/admin/tickets/events`        | SSE endpoint for admin notification indicators                     |
-| `GET`    | `/admin/tickets/notifications` | Unread customer reply count and recent tickets                     |
-| `POST`   | `/admin/tickets/upload`        | Upload file attachments                                            |
-| `GET`    | `/admin/tickets/ai-settings`   | Get AI configuration (provider, prompts, enabled flags)            |
-| `POST`   | `/admin/tickets/ai-settings`   | Update AI configuration                                            |
-| `GET`    | `/admin/tickets/:id/ai`        | Get AI analysis for a ticket                                       |
-| `POST`   | `/admin/tickets/:id/ai`        | Trigger on-demand AI analysis                                      |
+| Method   | Path                                         | Purpose                                                                                |
+| -------- | -------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `GET`    | `/admin/tickets`                             | List tickets (`status`, `category`, `customer_id`, `assigned_to`, `q`, `tab`, paging). |
+| `GET`    | `/admin/tickets/:id`                         | Ticket with messages, events and notes.                                                |
+| `POST`   | `/admin/tickets/:id`                         | Update `status` / `assigned_to`.                                                       |
+| `DELETE` | `/admin/tickets/:id`                         | Delete a ticket and its data.                                                          |
+| `POST`   | `/admin/tickets/:id/messages`                | Reply as admin.                                                                        |
+| `GET`    | `/admin/tickets/:id/notes`                   | List internal notes.                                                                   |
+| `POST`   | `/admin/tickets/:id/notes`                   | Add an internal note.                                                                  |
+| `POST`   | `/admin/tickets/:id/merge`                   | Merge `source_ticket_id` into this ticket (same customer).                             |
+| `GET`    | `/admin/tickets/:id/email-drafts`            | List guest email drafts with delivery status.                                          |
+| `POST`   | `/admin/tickets/:id/email-drafts`            | Create or revise a guest email draft.                                                  |
+| `POST`   | `/admin/tickets/email-drafts/:draft_id/send` | Send a reviewed draft (human admin session only).                                      |
+| `POST`   | `/admin/tickets/bulk`                        | Bulk status / assignment update (max 50).                                              |
+| `GET`    | `/admin/tickets/events`                      | SSE stream for admin indicators.                                                       |
+| `GET`    | `/admin/tickets/notifications`               | Unread customer reply count and recent tickets.                                        |
+| `POST`   | `/admin/tickets/upload`                      | Upload attachments (multipart).                                                        |
+| `GET`    | `/admin/tickets/ai-settings`                 | AI flags, provider (API key is never returned) and prompts.                            |
+| `POST`   | `/admin/tickets/ai-settings`                 | Update AI flags, provider and prompts.                                                 |
+| `GET`    | `/admin/tickets/:id/ai`                      | Stored AI analysis for a ticket.                                                       |
+| `POST`   | `/admin/tickets/:id/ai`                      | Run AI analysis on demand.                                                             |
+| `POST`   | `/admin/tickets/:id/ai/suggest`              | Generate a suggested reply from an existing analysis.                                  |
 
-### Attachment routes
+### Other
 
-| Method | Path                                                       | Description                                                                 |
-| ------ | ---------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `GET`  | `/support-tickets/tickets/:ticket_id/attachments/:file_id` | Stream a private attachment after admin auth or customer ownership checking |
+| Method | Path                                                       | Purpose                                                            |
+| ------ | ---------------------------------------------------------- | ------------------------------------------------------------------ |
+| `GET`  | `/support-tickets/tickets/:ticket_id/attachments/:file_id` | Stream a private attachment to an admin or the owning customer.    |
+| `POST` | `/hooks/mailgun/inbound`                                   | Mailgun inbound webhook (signature-verified; disabled by default). |
 
-### Modules
+## Admin UI
 
-- **`supportTicket`** — Core ticket module (Ticket, TicketMessage, TicketEvent, TicketNote models; create, update, delete, merge, addMessage, addNote, listCustomerTickets, getTicketWithMessages, getUnreadCustomerReplyCount).
-- **`supportTicketAi`** — AI analysis module (AITicketAnalysis, AISetting models; analyzeTicket, analyzeMessage, provider/prompt configuration, auto-reply gating, escalation detection).
+- **Support Tickets** route (`/app/tickets`): split-panel inbox with filters, conversation, notes, history, merge,
+  bulk actions, attachments and guest email drafts.
+- **AI Assistant** tab and **AI Settings** drawer inside the tickets page: enable/disable AI and auto-reply, set the
+  provider, model, base URL and API key, edit analysis/response/escalation prompts, view per-ticket analysis.
 
-### Subscribers
+The plugin adds no widgets to other Admin pages.
 
-- **ticket-notifications** — Listens to `support_ticket.created`, `.message_added`, `.updated`, `.closed`, `.deleted`; emits SSE events and sends Discord webhooks.
-- **ai-ticket-analyzer** — Listens to `support_ticket.created` and `.message_added` (customer only); runs AI analysis, triggers auto-reply if eligible, and sends escalation webhooks.
+## Events, subscribers & scheduled jobs
 
-## Admin usage
+Events emitted by the `supportTicket` module: `support_ticket.created`, `support_ticket.message_added`,
+`support_ticket.updated`, `support_ticket.closed`, `support_ticket.deleted`, `support_ticket.merged`,
+`support_ticket.customer_reply`.
 
-After registration, open the Medusa Admin and use the **Tickets** page (`/app/tickets`) to:
+| Subscriber             | Events                                           | Behaviour                                                                                                                                                                                         |
+| ---------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ticket-notifications` | created, message_added, updated, closed, deleted | Pushes SSE updates; posts to the Discord webhook when one is configured (new ticket, customer reply, closed).                                                                                     |
+| `ai-ticket-analyzer`   | created, message_added (customer only)           | Runs AI analysis when AI is enabled **and** a provider is configured; auto-replies if enabled and eligible; sends escalations to the webhook. Email-channel tickets are not analysed on creation. |
 
-- view, filter, and search tickets,
-- reply to customers and add internal notes,
-- change status and assign tickets to staff,
-- merge duplicate tickets (same customer),
-- inspect ticket history and event timeline,
-- delete tickets.
+To disable AI processing, toggle **AI enabled** off in the AI Settings drawer (or leave the provider unconfigured: the
+analyzer then logs and skips). Auto-reply is off until enabled in the Admin. Leave `discord_webhook_url` unset to
+disable webhook calls. The plugin has no scheduled jobs.
 
-Use the **AI Assistant** tab inside `/app/tickets` (or click the sparkle icon in the context panel) to:
+## Storefront integration
 
-- enable/disable AI analysis,
-- enable/disable auto-reply,
-- configure the AI provider and model,
-- view prompt config and customize analysis/response/escalation prompts,
-- inspect AI analysis results per ticket.
+- Call the store routes with the customer's session or bearer token (`credentials: 'include'` for cookie sessions).
+- Upload files with `POST /store/tickets/upload` first, then pass the returned descriptors as `attachments` when
+  creating a message.
+- Subscribe to `GET /store/tickets/:id/events` with `EventSource` for live updates; the server sends a heartbeat every
+  30 seconds.
+- Attachment URLs point to `/support-tickets/tickets/:ticket_id/attachments/:file_id` on the backend and require the
+  customer's credentials.
 
-## Project structure
+## Guest email replies
 
-```text
-src/
-├── admin/             # Admin dashboard pages and API helpers
-│   ├── i18n/          # i18n configuration
-│   ├── lib/           # Admin fetch wrapper with CSRF support
-│   └── routes/        # Tickets split-panel page + AI Support settings page
-├── api/               # Admin and store API routes
-│   ├── admin/         # Admin route handlers (tickets, bulk, merge, notes, AI, upload)
-│   ├── store/         # Store route handlers (tickets, messages, events, upload)
-│   └── shared/        # Shared helpers, event bus, file upload logic
-├── jobs/              # Reserved for future scheduled jobs
-├── links/             # Reserved for future link definitions
-├── modules/           # Core ticket module + AI analysis module
-│   ├── ai/            # AI models, migrations, OpenAI provider, validation, service
-│   └── support-ticket/# Ticket models, migrations, service
-├── providers/         # Reserved for future providers
-├── subscribers/       # Discord/SSE notifications + AI ticket analyzer
-├── utils/             # Error extraction utility + escalation webhook
-└── workflows/         # Reserved for future workflow logic
+Guest tickets (opened by inbound email, no customer account) are answered by email. Staff save a draft, review it and
+send it; the plugin freezes the payload and enqueues it on the container service named by `email_queue_module`
+(default `emailQueue`). That service must implement:
+
+```ts
+enqueue(input: { idempotencyKey: string; recipientEmail: string; subject: string; templateKey: string; payload: Record<string, unknown>; category: string; metadata?: Record<string, unknown> }): Promise<string>
+getJob(id: string): Promise<{ id: string; status: string } | null>
+getJobByIdempotencyKey(key: string): Promise<{ id: string; status: string } | null>
 ```
 
-## Notes
+The payload uses `templateKey: '__inline__'` with `to`, `subject`, `text`, `html` and `reply_to`. Without a registered
+queue the send route answers `503 EMAIL_QUEUE_NOT_CONFIGURED`; drafts can still be saved.
 
-- Tickets follow a status lifecycle: `open` → `in_progress` / `waiting_customer` / `waiting_admin` → `closed`. Closed tickets are reopened automatically when a new message is received.
-- AI auto-reply requires a confidence score of ≥0.85 and is blocked for sensitive categories (refund, payment, fraud, legal, etc.). Auto-reply is disabled by default.
-- The AI provider has no built-in default. Provider, API key, model, and base URL must be configured before AI analysis or response generation can run.
-- File uploads are validated server-side via MIME magic bytes. Allowed types: PNG, JPEG, WebP, GIF, SVG, PDF, plain text, CSV, DOC, DOCX, XLS, XLSX.
-- Attachments are uploaded with Medusa File Module `private` access. Persisted attachment URLs point to an authenticated plugin route that streams files only to admins or to the customer that owns the ticket. Configure the active Medusa file provider so private objects are not publicly readable.
-- **SSE deployment model** — Real-time ticket updates use an in-memory event bus. This works for a single Medusa process. Multi-instance deployments should use sticky sessions or replace the event bus with Redis/pubsub before relying on SSE for cross-instance delivery.
-- SSE connections send a heartbeat every 30 seconds. The store endpoint verifies ticket ownership before subscribing.
-- Plugin options are optional. AI settings can be configured entirely from the admin UI; startup environment variables are only overrides.
+## Security notes
+
+- Store routes require an authenticated customer; ownership is checked on every ticket read, reply and SSE stream.
+- Admin routes require an authenticated user; sending guest email requires a human user session (not an API key).
+- The Mailgun webhook verifies the HMAC signature and timestamp, binds each signed token to its payload hash to block
+  replays, rejects unknown recipients, ignores automated mail and caps body and attachment sizes.
+- Guest reply tokens are random, stored hashed, and bound to the expected sender address.
+- AI API keys saved from the Admin are encrypted with AES-256-GCM using `api_key_encryption_key`; the key is never
+  returned by the API. Keep that secret and the Mailgun signing key out of source control.
+- Attachments are stored with File Module `private` access. Configure your file provider so private objects are not
+  publicly readable.
+- Ticket content is sent to your AI provider and (as previews) to the Discord webhook when those are configured.
+
+## Limitations / status
+
+- Version `0.x`: APIs may change.
+- SSE uses an in-memory event bus: it works for a single Medusa process. Multi-instance deployments need sticky
+  sessions or a shared pub/sub before relying on live updates across instances.
+- Inbound email supports Mailgun only.
+- Notifications use the Discord webhook payload format.
+- Admin UI copy is English only.
+- The AI module uses an OpenAI-compatible chat API; other APIs need a new provider in `src/modules/ai/providers`.
 
 ## License
 

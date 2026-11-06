@@ -1,5 +1,11 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import type { ReceiveInboundEmailInput } from '../../../../modules/support-ticket/service'
+import type { ResolvedSupportTicketConfig } from '../../../../lib/config'
+
+type InboundConfig = Pick<
+  ResolvedSupportTicketConfig,
+  'mailgunWebhookSigningKey' | 'inboundRecipients' | 'replyEmailDomain'
+>
 
 export const MAX_INBOUND_BYTES = 25 * 1024 * 1024
 export const MAX_INBOUND_TEXT_BYTES = 100_000
@@ -42,8 +48,8 @@ function address(value: string, preserveReplyToken = false) {
   return normalized
 }
 
-export function verifyInboundSignature(body: Record<string, unknown>) {
-  const key = process.env.MAILGUN_WEBHOOK_SIGNING_KEY?.trim()
+export function verifyInboundSignature(body: Record<string, unknown>, config: InboundConfig) {
+  const key = config.mailgunWebhookSigningKey
   if (!key) throw new InboundEmailError(503, 'inbound_signature_not_configured')
   const timestamp = scalar(body, 'timestamp', 12)
   const token = scalar(body, 'token', 128)
@@ -68,16 +74,17 @@ export function verifyInboundSignature(body: Record<string, unknown>) {
   return createHash('sha256').update(token).digest('hex')
 }
 
-export function normalizeInboundEmail(body: Record<string, unknown>, files: Express.Multer.File[]) {
+export function normalizeInboundEmail(
+  body: Record<string, unknown>,
+  files: Express.Multer.File[],
+  config: InboundConfig,
+) {
   const recipientEmail = address(scalar(body, 'recipient', 254), true)
   const [localPart, domain] = recipientEmail.split('@')
-  const allowed = (process.env.SUPPORT_INBOUND_RECIPIENTS ?? '')
-    .split(',')
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean)
+  const allowed = config.inboundRecipients
   let replyToken: string | undefined
   if (!allowed.includes(recipientEmail)) {
-    const replyDomain = process.env.SUPPORT_REPLY_EMAIL_DOMAIN?.trim().toLowerCase()
+    const replyDomain = config.replyEmailDomain
     const token = localPart.startsWith('reply+') ? localPart.slice(6) : ''
     if (!replyDomain || domain !== replyDomain || !REPLY_TOKEN.test(token)) {
       throw new InboundEmailError(406, 'unsupported_inbound_recipient')

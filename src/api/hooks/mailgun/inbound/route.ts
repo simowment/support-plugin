@@ -16,12 +16,14 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   let persistenceStarted = false
   try {
     const body = req.body as Record<string, unknown>
-    const providerTokenHash = verifyInboundSignature(body)
+    const service = resolveTicketService(req)
+    const config = service.getConfig()
+    const providerTokenHash = verifyInboundSignature(body, config)
     const { input, payloadHash, automatic } = normalizeInboundEmail(
       body,
       (req.files ?? []) as Express.Multer.File[],
+      config,
     )
-    const service = resolveTicketService(req)
     const locking = req.scope.resolve<ILockingModule>(Modules.LOCKING)
     const cache = req.scope.resolve<CacheService>(Modules.CACHE)
     const key = createHash('sha256')
@@ -98,12 +100,10 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       { timeout: 60, expire: 120 },
     )
     // A public provider ACK must not reveal ticket IDs, sender data or reply tokens.
-    return res
-      .status(200)
-      .json({
-        accepted: true,
-        ...(result === 'ignored' ? { ignored: 'automated_message' } : { duplicate: result }),
-      })
+    return res.status(200).json({
+      accepted: true,
+      ...(result === 'ignored' ? { ignored: 'automated_message' } : { duplicate: result }),
+    })
   } catch (error) {
     if (uploaded.length && !persistenceStarted) {
       try {

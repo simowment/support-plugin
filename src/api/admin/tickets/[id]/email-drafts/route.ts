@@ -17,15 +17,17 @@ export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) 
       'Email drafts are only available for guest tickets',
     )
   const drafts = await service.listGuestEmailDrafts(req.params.id)
-  const queue = req.scope.resolve<{ getJob(id: string): Promise<{ status: string } | null> }>(
-    'emailQueue',
-  )
+  type Queue = { getJob(id: string): Promise<{ status: string } | null> }
+  const queueKey = service.getConfig().emailQueueModule
+  // The email queue is optional: without it, drafts report their stored status.
+  const queue = req.scope.hasRegistration(queueKey) ? req.scope.resolve<Queue>(queueKey) : null
   const withDelivery = await Promise.all(
     drafts.map(async (draft) => ({
       ...draft,
-      delivery_status: draft.email_queue_id
-        ? ((await queue.getJob(String(draft.email_queue_id)))?.status ?? draft.status)
-        : draft.status,
+      delivery_status:
+        queue && draft.email_queue_id
+          ? ((await queue.getJob(String(draft.email_queue_id)))?.status ?? draft.status)
+          : draft.status,
     })),
   )
   return res.json({ drafts: withDelivery })
