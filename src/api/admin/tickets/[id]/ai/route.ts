@@ -7,6 +7,7 @@ import {
 import SupportTicketAIModuleService from '../../../../../modules/ai/service'
 import { SUPPORT_TICKET_AI_MODULE } from '../../../../../modules/ai/constants'
 import { sendEscalation } from '../../../../../utils/escalation-webhook'
+import { sendError } from '../../../../shared/helpers'
 
 type TicketRecord = {
   subject: string
@@ -46,6 +47,23 @@ export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse)
   const logger = req.scope.resolve('logger')
   const aiService: SupportTicketAIModuleService = req.scope.resolve(SUPPORT_TICKET_AI_MODULE)
   const providerConfig = await aiService.getProviderConfig()
+
+  if (!(await aiService.isEnabled())) {
+    return sendError(
+      res,
+      400,
+      'AI_DISABLED',
+      'AI suggestions are turned off. Turn them on in AI settings first.',
+    )
+  }
+  if (!(await aiService.isProviderConfigured())) {
+    return sendError(
+      res,
+      400,
+      'AI_NOT_CONFIGURED',
+      'AI is not set up: no AI provider key is configured for this shop.',
+    )
+  }
 
   const existingAnalysis = await aiService.getAnalysisForTicket(id)
   if (existingAnalysis) {

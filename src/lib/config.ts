@@ -63,6 +63,16 @@ export type SupportTicketModuleOptions = {
    * implement `enqueue`, `getJob` and `getJobByIdempotencyKey`. Default: "emailQueue".
    */
   email_queue_module?: string
+  /**
+   * Store support mailbox. Used as the Reply-To of emailed admin replies when no reply
+   * domain is configured. Env fallback: SUPPORT_EMAIL.
+   */
+  support_email?: string
+  /**
+   * Email the customer when an admin replies to a signed-in customer's ticket.
+   * Default: true. Guest (email) tickets always use the reviewed draft flow instead.
+   */
+  email_customer_replies?: boolean
   [key: string]: unknown
 }
 
@@ -75,6 +85,8 @@ export type ResolvedSupportTicketConfig = {
   replyEmailDomain?: string
   discordWebhookUrl?: string
   emailQueueModule: string
+  supportEmail?: string
+  emailCustomerReplies: boolean
 }
 
 export function resolveSupportTicketConfig(
@@ -96,6 +108,10 @@ export function resolveSupportTicketConfig(
     discordWebhookUrl:
       optionalString(options.discord_webhook_url) ?? optionalString(env.DISCORD_WEBHOOK_URL),
     emailQueueModule: optionalString(options.email_queue_module) ?? DEFAULT_EMAIL_QUEUE_MODULE,
+    supportEmail: (
+      optionalString(options.support_email) ?? optionalString(env.SUPPORT_EMAIL)
+    )?.toLowerCase(),
+    emailCustomerReplies: optionalBoolean(options.email_customer_replies) ?? true,
   }
 }
 

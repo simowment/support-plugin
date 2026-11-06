@@ -2,6 +2,10 @@ import type { AuthenticatedMedusaRequest, MedusaResponse } from '@medusajs/frame
 import type { SendGuestEmailDraftSchema } from '../../../../../middlewares'
 import type { z } from '@medusajs/framework/zod'
 import { resolveTicketService, sendError } from '../../../../../shared/helpers'
+import {
+  EMAIL_QUEUE_NOT_CONFIGURED_MESSAGE,
+  isSupportTicketError,
+} from '../../../../../../lib/errors'
 
 type Job = { id: string; status: string }
 type Body = z.infer<typeof SendGuestEmailDraftSchema>
@@ -22,12 +26,7 @@ export async function POST(req: AuthenticatedMedusaRequest<Body>, res: MedusaRes
   const service = resolveTicketService(req)
   const queueKey = service.getConfig().emailQueueModule
   if (!req.scope.hasRegistration(queueKey))
-    return sendError(
-      res,
-      503,
-      'EMAIL_QUEUE_NOT_CONFIGURED',
-      'No email queue is registered; guest email replies cannot be sent',
-    )
+    return sendError(res, 400, 'EMAIL_QUEUE_NOT_CONFIGURED', EMAIL_QUEUE_NOT_CONFIGURED_MESSAGE)
   try {
     let draft = await service.getGuestEmailDraft(req.params.draft_id)
     if (!draft) return sendError(res, 404, 'DRAFT_NOT_FOUND', 'Draft not found')
@@ -74,11 +73,22 @@ export async function POST(req: AuthenticatedMedusaRequest<Body>, res: MedusaRes
       .status(202)
       .json({ draft: { id: draft.id, status: job.status, email_queue_id: job.id } })
   } catch (error) {
+    // Expected refusals (no reply domain, draft edited, recipient changed, already sent)
+    // carry their own code and status. Anything else happened after the draft was frozen,
+    // so the email may or may not be queued: ask for a retry of this same request, which
+    // reuses the same queue intent and never sends a second copy.
+    if (isSupportTicketError(error)) {
+      return sendError(res, error.status, error.code, error.message)
+    }
+    const logger = req.scope.resolve<{ error(message: string): void }>('logger')
+    logger.error(
+      `[support-tickets] guest email send failed for draft ${req.params.draft_id}: ${error instanceof Error ? error.message : String(error)}`,
+    )
     return sendError(
       res,
       409,
       'SEND_RECONCILIATION_REQUIRED',
-      error instanceof Error ? error.message : 'Unable to reconcile send',
+      'The send was interrupted. Click "Check delivery" to reconcile; it will not send a second copy.',
     )
   }
 }

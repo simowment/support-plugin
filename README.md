@@ -1,15 +1,20 @@
 # Medusa Support Tickets Plugin
 
-Customer support tickets for Medusa v2. Customers open and follow tickets from the storefront, staff triage them from a
-Medusa Admin inbox, and inbound email (Mailgun) can open guest tickets that staff answer by email. AI triage
+Customer support tickets for Medusa v2. Signed-in customers open tickets from the storefront, staff answer them from a
+Medusa Admin inbox, and the answer is emailed to the customer. Inbound email (Mailgun) can open guest tickets that
+staff answer by email too. AI triage
 (analysis, suggested replies, optional auto-reply and escalation) is optional and works with any OpenAI-compatible
 endpoint.
 
 ## Features
 
 - Customer-authenticated store API: create tickets, list own tickets, reply, live updates over server-sent events (SSE).
-- Admin API and inbox page: filter/search, reply, change status, assign, internal notes, merge (same customer), bulk
-  updates, delete, full event history.
+- Admin API and inbox page: filter/search, "assigned to me", reply, change status, assign to an admin, internal notes,
+  merge (same customer), delete, readable activity log. A help strip says where tickets come from and what this shop
+  can do (email intake, emailed replies, guest replies, AI), from `GET /admin/tickets/config`.
+- Admin replies to signed-in customers are emailed to them through the email queue (medusa-notification-smtp). With a
+  reply domain the Reply-To is a one-time `reply+<token>@<domain>` address, so the customer's answer lands on the
+  ticket; otherwise it is the support mailbox (`SUPPORT_EMAIL`).
 - Private file attachments (images, PDF, text, CSV, Office documents), 10 MB per file, up to 5 files per message,
   validated by MIME magic bytes and served only to admins or the owning customer.
 - Optional Mailgun inbound email: signed webhook opens guest tickets from configured mailboxes and threads guest
@@ -101,7 +106,9 @@ variable is read only when the matching option is unset.
 | `inbound_recipients`          | `SUPPORT_INBOUND_RECIPIENTS`      | `[]`           | Mailboxes (array, or comma-separated string) whose mail opens new guest tickets. Other recipients are rejected unless they are reply addresses. |
 | `reply_email_domain`          | `SUPPORT_REPLY_EMAIL_DOMAIN`      | none           | Domain for `reply+<token>@<domain>` guest reply addresses. Required to receive guest replies and to send guest email drafts.                    |
 | `discord_webhook_url`         | `DISCORD_WEBHOOK_URL`             | none           | Discord-compatible webhook for new ticket, customer reply, closed and escalation messages. Unset means no webhook calls.                        |
-| `email_queue_module`          | none                              | `"emailQueue"` | Container key of the email queue used to send guest email replies.                                                                              |
+| `email_queue_module`          | none                              | `"emailQueue"` | Container key of the email queue used to email replies (customer and guest).                                                                    |
+| `support_email`               | `SUPPORT_EMAIL`                   | none           | Support mailbox, used as the Reply-To of emailed customer replies when no reply domain is set.                                                  |
+| `email_customer_replies`      | none                              | `true`         | Email admin replies (and AI auto-replies) to signed-in customers. Set `false` to only store them on the ticket.                                  |
 
 ### `supportTicketAi` module options
 
@@ -159,17 +166,18 @@ ticket). Categories: `order_issue`, `return_request`, `fulfillment_issue`, `prod
 
 | Method   | Path                                         | Purpose                                                                                |
 | -------- | -------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `GET`    | `/admin/tickets`                             | List tickets (`status`, `category`, `customer_id`, `assigned_to`, `q`, `tab`, paging). |
+| `GET`    | `/admin/tickets`                             | List tickets (`status`, `category`, `customer_id`, `assigned_to`, `q`, `tab`, paging). Each row has `customer` (name/email or null) and `customer_deleted`. |
+| `GET`    | `/admin/tickets/config`                      | What the inbox can do: email intake, emailed replies, guest replies (with the reason when not), AI state. No secrets. |
 | `GET`    | `/admin/tickets/:id`                         | Ticket with messages, events and notes.                                                |
 | `POST`   | `/admin/tickets/:id`                         | Update `status` / `assigned_to`.                                                       |
 | `DELETE` | `/admin/tickets/:id`                         | Delete a ticket and its data.                                                          |
-| `POST`   | `/admin/tickets/:id/messages`                | Reply as admin.                                                                        |
+| `POST`   | `/admin/tickets/:id/messages`                | Reply as admin to a signed-in customer; `email.will_send` says whether it is emailed. Guest tickets: `409 GUEST_TICKET_USE_EMAIL_DRAFT` (use email drafts). |
 | `GET`    | `/admin/tickets/:id/notes`                   | List internal notes.                                                                   |
 | `POST`   | `/admin/tickets/:id/notes`                   | Add an internal note.                                                                  |
 | `POST`   | `/admin/tickets/:id/merge`                   | Merge `source_ticket_id` into this ticket (same customer).                             |
 | `GET`    | `/admin/tickets/:id/email-drafts`            | List guest email drafts with delivery status.                                          |
 | `POST`   | `/admin/tickets/:id/email-drafts`            | Create or revise a guest email draft.                                                  |
-| `POST`   | `/admin/tickets/email-drafts/:draft_id/send` | Send a reviewed draft (human admin session only).                                      |
+| `POST`   | `/admin/tickets/email-drafts/:draft_id/send` | Send a reviewed draft (human admin session only). Refusals: `400 REPLY_DOMAIN_NOT_CONFIGURED`, `400 EMAIL_QUEUE_NOT_CONFIGURED`, `404 DRAFT_NOT_FOUND`, `409 DRAFT_REVISION_CHANGED`, `409 RECIPIENT_CHANGED`, `409 DRAFT_NOT_SENDABLE`; `409 SEND_RECONCILIATION_REQUIRED` only when the send was interrupted (retry the same request). |
 | `POST`   | `/admin/tickets/bulk`                        | Bulk status / assignment update (max 50).                                              |
 | `GET`    | `/admin/tickets/events`                      | SSE stream for admin indicators.                                                       |
 | `GET`    | `/admin/tickets/notifications`               | Unread customer reply count and recent tickets.                                        |
@@ -177,7 +185,7 @@ ticket). Categories: `order_issue`, `return_request`, `fulfillment_issue`, `prod
 | `GET`    | `/admin/tickets/ai-settings`                 | AI flags, provider (API key is never returned) and prompts.                            |
 | `POST`   | `/admin/tickets/ai-settings`                 | Update AI flags, provider and prompts.                                                 |
 | `GET`    | `/admin/tickets/:id/ai`                      | Stored AI analysis for a ticket.                                                       |
-| `POST`   | `/admin/tickets/:id/ai`                      | Run AI analysis on demand.                                                             |
+| `POST`   | `/admin/tickets/:id/ai`                      | Run AI analysis on demand ("Analyze now"). `400 AI_DISABLED` / `400 AI_NOT_CONFIGURED` when it cannot run. |
 | `POST`   | `/admin/tickets/:id/ai/suggest`              | Generate a suggested reply from an existing analysis.                                  |
 
 ### Other
@@ -189,22 +197,33 @@ ticket). Categories: `order_issue`, `return_request`, `fulfillment_issue`, `prod
 
 ## Admin UI
 
-- **Support Tickets** route (`/app/tickets`): split-panel inbox with filters, conversation, notes, history, merge,
-  bulk actions, attachments and guest email drafts.
-- **AI Assistant** tab and **AI Settings** drawer inside the tickets page: enable/disable AI and auto-reply, set the
-  provider, model, base URL and API key, edit analysis/response/escalation prompts, view per-ticket analysis.
+- **Support tickets** route (`/app/tickets`):
+  - a help strip (hideable) explaining where tickets come from and whether email intake, emailed replies, guest
+    replies and AI are working on this shop, naming `igm shop provision mail` (Mailgun, with replies) and
+    `igm shop configure mail` (existing SMTP or Mailgun account) for setup;
+  - the list shows the customer's name ("Deleted customer" when the account is gone), with status, category and
+    "Assigned to me" filters and a labelled Refresh;
+  - the ticket view has the conversation with a reply box (it says where the reply goes), internal notes, a readable
+    Activity log and AI suggestions; guests get an "Email reply to <address>" panel with Save draft / Send email,
+    disabled with the reason when the shop cannot send;
+  - the side panel has a plain Status select, an admin-user "Assigned to" select, the customer's other tickets and
+    "Merge one into this ticket…" (the other ticket's messages and notes move here and it is closed).
+- **AI suggestions** tab and **AI settings** drawer: shows "Not set up" when no provider key is configured, "Analyze now"
+  for tickets that arrived before AI was set up, the real auto-reply rules (85% confidence, blocked categories) and a
+  cost note.
 
 The plugin adds no widgets to other Admin pages.
 
 ## Events, subscribers & scheduled jobs
 
 Events emitted by the `supportTicket` module: `support_ticket.created`, `support_ticket.message_added`,
-`support_ticket.updated`, `support_ticket.closed`, `support_ticket.deleted`, `support_ticket.merged`,
-`support_ticket.customer_reply`.
+`support_ticket.updated`, `support_ticket.closed` (when a ticket's status changes to closed, in addition to
+`updated`), `support_ticket.deleted`, `support_ticket.merged`, `support_ticket.customer_reply` (inbound email reply).
 
 | Subscriber             | Events                                           | Behaviour                                                                                                                                                                                         |
 | ---------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ticket-notifications` | created, message_added, updated, closed, deleted | Pushes SSE updates; posts to the Discord webhook when one is configured (new ticket, customer reply, closed).                                                                                     |
+| `ticket-reply-email`   | message_added (admin or system sender)           | Emails the reply to a signed-in customer through the email queue (idempotency key `support-ticket-admin-reply:<message id>`). Guest tickets use the reviewed draft flow instead.           |
 | `ai-ticket-analyzer`   | created, message_added (customer only)           | Runs AI analysis when AI is enabled **and** a provider is configured; auto-replies if enabled and eligible; sends escalations to the webhook. Email-channel tickets are not analysed on creation. |
 
 To disable AI processing, toggle **AI enabled** off in the AI Settings drawer (or leave the provider unconfigured: the
@@ -234,7 +253,10 @@ getJobByIdempotencyKey(key: string): Promise<{ id: string; status: string } | nu
 ```
 
 The payload uses `templateKey: '__inline__'` with `to`, `subject`, `text`, `html` and `reply_to`. Without a registered
-queue the send route answers `503 EMAIL_QUEUE_NOT_CONFIGURED`; drafts can still be saved.
+queue the send route answers `400 EMAIL_QUEUE_NOT_CONFIGURED`, and without a reply domain `400
+REPLY_DOMAIN_NOT_CONFIGURED`; drafts can still be saved. The admin panel disables Send email and shows the reason.
+
+The same queue carries the emailed replies to signed-in customers (see `ticket-reply-email`).
 
 ## Security notes
 

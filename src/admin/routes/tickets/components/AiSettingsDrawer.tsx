@@ -1,5 +1,17 @@
-import { Button, Drawer, Heading, Input, Label, Select, Switch, Text, Textarea, toast } from '@medusajs/ui'
+import {
+  Button,
+  Drawer,
+  Heading,
+  Input,
+  Label,
+  Select,
+  Switch,
+  Text,
+  Textarea,
+  toast,
+} from '@medusajs/ui'
 import { useEffect, useState } from 'react'
+import { CONFIDENCE_THRESHOLD_LABEL, BLOCKED_CATEGORIES_LABEL } from '../lib/ai-policy'
 import {
   fetchAISettings,
   saveAIEnabled,
@@ -37,6 +49,7 @@ const initialPrompts: PromptSettings = {
 
 export const AiSettingsDrawer = ({ open, onOpenChange, onSettingsChanged }: Props) => {
   const [aiEnabled, setAiEnabled] = useState(true)
+  const [configured, setConfigured] = useState(false)
   const [autoReplyEnabled, setAutoReplyEnabled] = useState(false)
   const [loadingToggle, setLoadingToggle] = useState(false)
   const [loadingAutoReplyToggle, setLoadingAutoReplyToggle] = useState(false)
@@ -56,6 +69,7 @@ export const AiSettingsDrawer = ({ open, onOpenChange, onSettingsChanged }: Prop
       .then((data) => {
         if (cancelled) return
         setAiEnabled(data.enabled)
+        setConfigured(Boolean(data.configured))
         setAutoReplyEnabled(data.auto_reply_enabled)
         setProvider(data.provider)
         setPrompts(data.prompts)
@@ -63,8 +77,9 @@ export const AiSettingsDrawer = ({ open, onOpenChange, onSettingsChanged }: Prop
       .catch((error) => {
         if (cancelled) return
         console.error('[ai-settings-drawer] fetchAISettings failed', error)
-        setAiEnabled(true)
-        setAutoReplyEnabled(false)
+        toast.error('Could not load AI settings', {
+          description: error instanceof Error ? error.message : undefined,
+        })
       })
       .finally(() => {
         if (!cancelled) setLoadingSettings(false)
@@ -86,11 +101,13 @@ export const AiSettingsDrawer = ({ open, onOpenChange, onSettingsChanged }: Prop
     try {
       const data = await saveAIEnabled(checked)
       setAiEnabled(data.enabled)
-      toast.success(checked ? 'AI analysis enabled' : 'AI analysis disabled')
+      toast.success(checked ? 'AI suggestions turned on' : 'AI suggestions turned off')
       onSettingsChanged?.()
     } catch (error) {
       console.error('[ai-settings-drawer] saveAIEnabled failed', error)
-      toast.error('Failed to update AI settings')
+      toast.error('Could not update AI settings', {
+        description: error instanceof Error ? error.message : undefined,
+      })
     } finally {
       setLoadingToggle(false)
     }
@@ -101,11 +118,13 @@ export const AiSettingsDrawer = ({ open, onOpenChange, onSettingsChanged }: Prop
     try {
       const data = await saveAutoReplyEnabled(checked)
       setAutoReplyEnabled(data.auto_reply_enabled)
-      toast.success(checked ? 'Auto-reply enabled' : 'Auto-reply disabled')
+      toast.success(checked ? 'Auto-reply turned on' : 'Auto-reply turned off')
       onSettingsChanged?.()
     } catch (error) {
       console.error('[ai-settings-drawer] saveAutoReplyEnabled failed', error)
-      toast.error('Failed to update auto-reply setting')
+      toast.error('Could not update auto-reply', {
+        description: error instanceof Error ? error.message : undefined,
+      })
     } finally {
       setLoadingAutoReplyToggle(false)
     }
@@ -125,9 +144,12 @@ export const AiSettingsDrawer = ({ open, onOpenChange, onSettingsChanged }: Prop
       if (editingApiKey && apiKeyInput) {
         payload.api_key = apiKeyInput
       }
-      const data = await saveProviderConfig(payload)
+      const data = (await saveProviderConfig(payload)) as Awaited<
+        ReturnType<typeof saveProviderConfig>
+      > & { configured?: boolean }
       setProvider(data.provider)
       setPrompts(data.prompts)
+      setConfigured(Boolean(data.configured))
       setEditingApiKey(false)
       setApiKeyInput('')
       toast.success('Settings saved')
@@ -135,7 +157,9 @@ export const AiSettingsDrawer = ({ open, onOpenChange, onSettingsChanged }: Prop
       onOpenChange(false)
     } catch (error) {
       console.error('[ai-settings-drawer] saveProviderConfig failed', error)
-      toast.error('Failed to save settings')
+      toast.error('Could not save AI settings', {
+        description: error instanceof Error ? error.message : undefined,
+      })
     } finally {
       setSaving(false)
     }
@@ -145,19 +169,41 @@ export const AiSettingsDrawer = ({ open, onOpenChange, onSettingsChanged }: Prop
     <Drawer open={open} onOpenChange={onOpenChange}>
       <Drawer.Content className="!max-w-[640px]">
         <Drawer.Header>
-          <Drawer.Title>AI Assistant Settings</Drawer.Title>
+          <Drawer.Title>AI settings</Drawer.Title>
           <Drawer.Description>
-            Provider, prompts, and automation policy used by the AI engine.
+            The AI reads new tickets and suggests a category, a priority and a reply.
           </Drawer.Description>
         </Drawer.Header>
 
-        <Drawer.Body className="space-y-8">
+        <Drawer.Body className="space-y-8 overflow-y-auto">
           {loadingSettings ? (
             <Text className="text-ui-fg-subtle">Loading settings…</Text>
           ) : (
             <>
-              <section className="rounded-xl border bg-ui-bg-base p-6 shadow-sm space-y-4">
+              <div
+                className={`rounded-lg border p-4 ${configured ? 'bg-ui-bg-subtle' : 'bg-ui-tag-orange-bg border-ui-tag-orange-border'}`}
+              >
+                <Text size="small" weight="plus">
+                  {!configured
+                    ? 'Not set up: AI suggestions cannot run'
+                    : aiEnabled
+                      ? 'Set up and on'
+                      : 'Set up, but turned off'}
+                </Text>
+                <Text size="small" className="text-ui-fg-subtle mt-1">
+                  {!configured
+                    ? 'No AI provider key is configured for this shop, so tickets are not analyzed even when the switch below is on.'
+                    : 'New tickets are analyzed when they arrive.'}{' '}
+                  Each analysis or suggestion is a paid request to the AI provider.
+                </Text>
+              </div>
+
+              <section className="bg-ui-bg-base space-y-4 rounded-xl border p-6 shadow-sm">
                 <Heading level="h3">Provider</Heading>
+                <Text size="small" className="text-ui-fg-subtle">
+                  Usually filled from the shop's AI gateway settings. Change only if you know the
+                  provider details.
+                </Text>
                 <div className="grid gap-4">
                   <div>
                     <Label htmlFor="ai-provider">Model Provider</Label>
@@ -180,9 +226,7 @@ export const AiSettingsDrawer = ({ open, onOpenChange, onSettingsChanged }: Prop
                       id="ai-model"
                       className="mt-1"
                       value={provider.model}
-                      onChange={(e) =>
-                        setProvider((p) => ({ ...p, model: e.target.value }))
-                      }
+                      onChange={(e) => setProvider((p) => ({ ...p, model: e.target.value }))}
                       placeholder="Enter model name"
                     />
                   </div>
@@ -192,9 +236,7 @@ export const AiSettingsDrawer = ({ open, onOpenChange, onSettingsChanged }: Prop
                       id="ai-base-url"
                       className="mt-1"
                       value={provider.base_url}
-                      onChange={(e) =>
-                        setProvider((p) => ({ ...p, base_url: e.target.value }))
-                      }
+                      onChange={(e) => setProvider((p) => ({ ...p, base_url: e.target.value }))}
                       placeholder="https://provider.example/v1"
                     />
                   </div>
@@ -207,15 +249,10 @@ export const AiSettingsDrawer = ({ open, onOpenChange, onSettingsChanged }: Prop
                         value={editingApiKey ? apiKeyInput : provider.api_key_preview}
                         onChange={(e) => setApiKeyInput(e.target.value)}
                         disabled={!editingApiKey}
-                        placeholder={
-                          provider.has_api_key ? '••••••••' : 'Enter API key'
-                        }
+                        placeholder={provider.has_api_key ? '••••••••' : 'Enter API key'}
                       />
                       {!editingApiKey ? (
-                        <Button
-                          variant="secondary"
-                          onClick={() => setEditingApiKey(true)}
-                        >
+                        <Button variant="secondary" onClick={() => setEditingApiKey(true)}>
                           Edit
                         </Button>
                       ) : (
@@ -234,13 +271,13 @@ export const AiSettingsDrawer = ({ open, onOpenChange, onSettingsChanged }: Prop
                 </div>
               </section>
 
-              <section className="rounded-xl border bg-ui-bg-base p-6 shadow-sm space-y-4">
+              <section className="bg-ui-bg-base space-y-4 rounded-xl border p-6 shadow-sm">
                 <Heading level="h3">Automation</Heading>
                 <div className="flex items-start justify-between">
                   <div>
-                    <Text weight="plus">AI Analysis</Text>
+                    <Text weight="plus">AI suggestions</Text>
                     <Text size="small" className="text-ui-fg-subtle">
-                      Run the AI engine on new and updated tickets.
+                      Analyze new tickets and suggest replies. Nothing is sent to customers.
                     </Text>
                   </div>
                   <Switch
@@ -251,10 +288,10 @@ export const AiSettingsDrawer = ({ open, onOpenChange, onSettingsChanged }: Prop
                 </div>
                 <div className="flex items-start justify-between">
                   <div>
-                    <Text weight="plus">Direct Automation</Text>
+                    <Text weight="plus">Auto-reply</Text>
                     <Text size="small" className="text-ui-fg-subtle">
-                      Auto-reply when confidence is high and no sensitive keywords are
-                      detected.
+                      Send the suggested reply to the customer without a human, when the rules below
+                      allow it. Off by default.
                     </Text>
                   </div>
                   <Switch
@@ -263,22 +300,26 @@ export const AiSettingsDrawer = ({ open, onOpenChange, onSettingsChanged }: Prop
                     disabled={loadingAutoReplyToggle}
                   />
                 </div>
-                <div className="p-4 rounded-lg bg-ui-bg-subtle text-ui-fg-subtle text-xs border border-ui-border-base">
-                  <Text size="xsmall" weight="plus" className="mb-1 uppercase tracking-tight">
-                    Safety Protocol
+                <div className="bg-ui-bg-subtle text-ui-fg-subtle border-ui-border-base rounded-lg border p-4 text-xs">
+                  <Text size="xsmall" weight="plus" className="mb-1">
+                    When auto-reply sends
                   </Text>
                   <Text size="xsmall">
-                    AI only replies automatically when confidence &gt; 90% and no sensitive
-                    keywords (refund, legal, fraud) are detected.
+                    Only when the AI is at least {CONFIDENCE_THRESHOLD_LABEL} confident in its reply
+                    and the ticket is not about {BLOCKED_CATEGORIES_LABEL}. Everything else waits
+                    for a human.
                   </Text>
                 </div>
               </section>
 
-              <section className="rounded-xl border bg-ui-bg-base p-6 shadow-sm space-y-4">
-                <Heading level="h3">System Prompts</Heading>
+              <section className="bg-ui-bg-base space-y-4 rounded-xl border p-6 shadow-sm">
+                <Heading level="h3">Instructions for the AI</Heading>
+                <Text size="small" className="text-ui-fg-subtle">
+                  Optional. Leave empty to use the built-in instructions.
+                </Text>
                 <div className="grid gap-4">
                   <div>
-                    <Label htmlFor="ai-analysis-prompt">Triage &amp; Analysis Logic</Label>
+                    <Label htmlFor="ai-analysis-prompt">How to classify tickets</Label>
                     <Textarea
                       id="ai-analysis-prompt"
                       className="mt-1 font-mono text-xs leading-relaxed"
@@ -293,7 +334,7 @@ export const AiSettingsDrawer = ({ open, onOpenChange, onSettingsChanged }: Prop
                     />
                   </div>
                   <div>
-                    <Label htmlFor="ai-escalation-prompt">Strict Escalation Rules</Label>
+                    <Label htmlFor="ai-escalation-prompt">When to alert a human</Label>
                     <Textarea
                       id="ai-escalation-prompt"
                       className="mt-1 font-mono text-xs leading-relaxed"
@@ -308,7 +349,7 @@ export const AiSettingsDrawer = ({ open, onOpenChange, onSettingsChanged }: Prop
                     />
                   </div>
                   <div>
-                    <Label htmlFor="ai-response-prompt">Voice &amp; Tone Profile</Label>
+                    <Label htmlFor="ai-response-prompt">Tone of suggested replies</Label>
                     <Textarea
                       id="ai-response-prompt"
                       className="mt-1 font-mono text-xs leading-relaxed"
@@ -333,7 +374,7 @@ export const AiSettingsDrawer = ({ open, onOpenChange, onSettingsChanged }: Prop
             <Button variant="secondary">Close</Button>
           </Drawer.Close>
           <Button onClick={handleSave} isLoading={saving} disabled={loadingSettings}>
-            Save All Settings
+            Save settings
           </Button>
         </Drawer.Footer>
       </Drawer.Content>

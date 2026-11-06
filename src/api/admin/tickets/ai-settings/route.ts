@@ -16,6 +16,7 @@ export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) 
 
   return res.json({
     enabled,
+    configured: await aiService.isProviderConfigured(),
     auto_reply_enabled: autoReplyEnabled,
     provider: {
       provider: providerConfig.provider,
@@ -81,6 +82,7 @@ export async function POST(req: AuthenticatedMedusaRequest<AISettingsBody>, res:
 
   return res.json({
     enabled,
+    configured: await aiService.isProviderConfigured(),
     auto_reply_enabled: autoReplyEnabled,
     provider: {
       provider: providerConfig.provider,

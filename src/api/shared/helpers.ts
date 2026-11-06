@@ -76,9 +76,12 @@ export function sendError(
   message: string,
   details?: unknown,
 ) {
+  // `message` is what the admin SDK and Medusa clients read; `error` is kept for
+  // existing callers (the storefronts read it).
   return res.status(status).json({
     success: false,
     code,
+    message,
     error: message,
     ...(details !== undefined ? { details } : {}),
   })

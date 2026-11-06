@@ -172,7 +172,7 @@ const uploadTicketFiles = <Req extends MedusaRequest>(
   next: MedusaNextFunction,
 ) => multerUploadTicketFiles(req as never, res as never, next)
 
-const excludedAdminTicketUpdatePaths = new Set(['bulk', 'ai-settings', 'upload'])
+const excludedAdminTicketUpdatePaths = new Set(['bulk', 'ai-settings', 'upload', 'config'])
 const validateUpdateTicketBody = validateAndTransformBody(UpdateTicketSchema)
 const authenticateAttachmentKey = authenticate('user', ['api-key'])
 const authenticateAttachmentAccount = authenticate(['user', 'customer'], ['session', 'bearer'])

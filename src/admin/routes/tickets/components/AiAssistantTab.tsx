@@ -3,6 +3,8 @@ import { Badge, Button, Heading, Text, Textarea, toast } from '@medusajs/ui'
 import { useEffect, useRef, useState } from 'react'
 import { generateSuggestion, type AIAnalysis } from '../lib/ai'
 import { formatLabel } from '../lib/format'
+import type { TicketsConfig } from '../lib/ticket-page'
+import { aiUnavailableReason } from './IntelligencePanel'
 
 type Message = {
   id: string
@@ -19,7 +21,9 @@ type Props = {
   onOpenSettings: () => void
   onApplySuggestion: (text: string) => void
   onSuggestionGenerated: (suggested: string, confidence: number) => void
-  onRetryAnalysis: () => void
+  config: TicketsConfig | null
+  onAnalyzeNow: () => void
+  analyzing: boolean
 }
 
 export const AiAssistantTab = ({
@@ -30,7 +34,9 @@ export const AiAssistantTab = ({
   onOpenSettings,
   onApplySuggestion,
   onSuggestionGenerated,
-  onRetryAnalysis,
+  config,
+  onAnalyzeNow,
+  analyzing,
 }: Props) => {
   const [draft, setDraft] = useState('')
   const [generating, setGenerating] = useState(false)
@@ -56,11 +62,13 @@ export const AiAssistantTab = ({
       if (cancelledRef.current) return
       setDraft(result.suggested_response)
       onSuggestionGenerated(result.suggested_response, result.confidence)
-      toast.success('AI suggestion regenerated')
+      toast.success('New suggestion ready')
     } catch (error) {
       if (cancelledRef.current) return
       console.error('[ai-assistant-tab] regenerate failed', error)
-      toast.error('Failed to generate suggestion')
+      toast.error('Could not get a suggestion', {
+        description: error instanceof Error ? error.message : undefined,
+      })
     } finally {
       if (!cancelledRef.current) setGenerating(false)
     }
@@ -71,7 +79,7 @@ export const AiAssistantTab = ({
     if (!text) return
     try {
       await navigator.clipboard.writeText(text)
-      toast.success('Ready to paste in ticket!')
+      toast.success('Copied')
     } catch (error) {
       console.error('[ai-assistant-tab] clipboard write failed', error)
       toast.error('Copy failed')
@@ -85,42 +93,37 @@ export const AiAssistantTab = ({
     toast.success('Loaded into reply box')
   }
 
-  if (loadingAnalysis) {
+  if (loadingAnalysis && !analysis) {
     return (
-      <div className="h-full flex items-center justify-center">
-        <div className="flex flex-col items-center gap-6">
-          <div className="relative">
-            <Spinner className="animate-spin h-12 w-12 text-ui-fg-interactive" />
-            <Sparkles className="absolute inset-0 m-auto h-5 w-5 text-ui-fg-interactive animate-pulse" />
-          </div>
-          <div className="text-center">
-            <Text weight="plus" className="text-lg tracking-tight">
-              AI is Thinking...
-            </Text>
-            <Text size="small" className="text-ui-fg-subtle">
-              Processing ticket context and history
-            </Text>
-          </div>
-        </div>
+      <div className="flex h-full items-center justify-center gap-2">
+        <Spinner className="h-4 w-4 animate-spin" />
+        <Text size="small" className="text-ui-fg-subtle">
+          Loading the AI analysis…
+        </Text>
       </div>
     )
   }
 
   if (!analysis) {
+    const unavailable = aiUnavailableReason(config)
     return (
-      <div className="max-w-md mx-auto h-full flex flex-col items-center justify-center text-center p-8 bg-ui-bg-base rounded-2xl border shadow-sm">
-        <Sparkles className="h-12 w-12 text-ui-fg-error mb-4" />
-        <Heading level="h3">No AI Analysis</Heading>
+      <div className="bg-ui-bg-base mx-auto flex h-full max-w-md flex-col items-center justify-center rounded-2xl border p-8 text-center shadow-sm">
+        <Sparkles className="text-ui-fg-subtle mb-4 h-10 w-10" />
+        <Heading level="h3">
+          {unavailable ? 'AI suggestions unavailable' : 'Not analyzed yet'}
+        </Heading>
         <Text className="text-ui-fg-subtle mt-2">
-          This ticket has not been analyzed yet. The AI engine may be disabled or the analysis
-          pipeline is still warming up.
+          {unavailable ??
+            'The AI reads the first customer message and suggests a category, a priority and a reply. Tickets are analyzed when they arrive; older tickets can be analyzed now.'}
         </Text>
         <div className="mt-6 flex gap-3">
-          <Button variant="secondary" onClick={onRetryAnalysis}>
-            Try Again
-          </Button>
-          <Button variant="primary" onClick={onOpenSettings}>
-            Configure AI
+          {!unavailable && (
+            <Button variant="primary" onClick={onAnalyzeNow} isLoading={analyzing}>
+              Analyze now
+            </Button>
+          )}
+          <Button variant="secondary" onClick={onOpenSettings}>
+            AI settings
           </Button>
         </div>
       </div>
@@ -131,32 +134,38 @@ export const AiAssistantTab = ({
   const suggested = draft || analysis.suggested_response || ''
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 lg:gap-8 items-start">
+    <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[1fr_320px] lg:gap-8">
       <div className="space-y-6">
         {messages.length > 0 && (
-          <div className="rounded-2xl border bg-ui-bg-base shadow-sm overflow-hidden">
+          <div className="bg-ui-bg-base overflow-hidden rounded-2xl border shadow-sm">
             <button
               type="button"
               onClick={() => setShowTranscript((v) => !v)}
               aria-expanded={showTranscript}
               aria-controls={`transcript-${ticketId}`}
-              className="w-full px-6 py-4 flex items-center justify-between hover:bg-ui-bg-subtle/30 focus:outline-none focus:ring-2 focus:ring-ui-fg-interactive focus:ring-inset transition-colors"
+              className="hover:bg-ui-bg-subtle/30 focus:ring-ui-fg-interactive flex w-full items-center justify-between px-6 py-4 transition-colors focus:ring-2 focus:outline-none focus:ring-inset"
             >
               <div className="flex items-center gap-2">
-                <ChatBubbleLeftRight className="h-4 w-4 text-ui-fg-subtle" />
-                <Text size="xsmall" weight="plus" className="text-ui-fg-subtle uppercase tracking-widest font-bold">
+                <ChatBubbleLeftRight className="text-ui-fg-subtle h-4 w-4" />
+                <Text
+                  size="xsmall"
+                  weight="plus"
+                  className="text-ui-fg-subtle font-bold tracking-widest uppercase"
+                >
                   Conversation Transcript
                 </Text>
-                <Badge size="2xsmall" color="grey">{messages.length}</Badge>
+                <Badge size="2xsmall" color="grey">
+                  {messages.length}
+                </Badge>
               </div>
               <ChevronDown
-                className={`h-4 w-4 text-ui-fg-subtle transition-transform ${showTranscript ? 'rotate-180' : ''}`}
+                className={`text-ui-fg-subtle h-4 w-4 transition-transform ${showTranscript ? 'rotate-180' : ''}`}
               />
             </button>
             {showTranscript && (
               <div
                 id={`transcript-${ticketId}`}
-                className="border-t bg-ui-bg-subtle/5 p-6 space-y-4 max-h-[320px] overflow-y-auto custom-scrollbar"
+                className="bg-ui-bg-subtle/5 custom-scrollbar max-h-[320px] space-y-4 overflow-y-auto border-t p-6"
               >
                 {messages.map((msg) => (
                   <div
@@ -166,13 +175,13 @@ export const AiAssistantTab = ({
                     <div
                       className={`max-w-[80%] rounded-2xl p-3 text-sm ${
                         msg.sender_type === 'customer'
-                          ? 'bg-ui-bg-base border shadow-sm rounded-tl-none text-ui-fg-base'
+                          ? 'bg-ui-bg-base text-ui-fg-base rounded-tl-none border shadow-sm'
                           : msg.sender_type === 'system'
-                            ? 'bg-ui-bg-subtle border-dashed border text-ui-fg-subtle text-xs italic'
+                            ? 'bg-ui-bg-subtle text-ui-fg-subtle border border-dashed text-xs italic'
                             : 'bg-ui-bg-interactive text-ui-fg-on-color rounded-tr-none'
                       }`}
                     >
-                      <Text size="small" className="whitespace-pre-wrap leading-relaxed">
+                      <Text size="small" className="leading-relaxed whitespace-pre-wrap">
                         {msg.message}
                       </Text>
                     </div>
@@ -190,16 +199,16 @@ export const AiAssistantTab = ({
           </div>
         )}
 
-        <div className="rounded-2xl border bg-ui-bg-base shadow-xl overflow-hidden flex flex-col min-h-[420px]">
-          <div className="px-6 lg:px-8 py-5 border-b bg-ui-bg-base/50 backdrop-blur-sm flex items-center justify-between flex-wrap gap-3">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="p-2 rounded-lg bg-ui-bg-interactive/10">
+        <div className="bg-ui-bg-base flex min-h-[420px] flex-col overflow-hidden rounded-2xl border shadow-xl">
+          <div className="bg-ui-bg-base/50 flex flex-wrap items-center justify-between gap-3 border-b px-6 py-5 backdrop-blur-sm lg:px-8">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="bg-ui-bg-interactive/10 rounded-lg p-2">
                 <Sparkles className="text-ui-fg-interactive h-6 w-6" />
               </div>
               <div>
-                <Heading level="h3">AI Suggested Response</Heading>
+                <Heading level="h3">Suggested reply</Heading>
                 <div className="flex items-center gap-2">
-                  <div className="h-2 w-2 rounded-full bg-ui-fg-success animate-pulse" />
+                  <div className="bg-ui-fg-success h-2 w-2 animate-pulse rounded-full" />
                   <Text size="xsmall" className="text-ui-fg-subtle">
                     Confidence: {confidence}%
                   </Text>
@@ -214,20 +223,15 @@ export const AiAssistantTab = ({
                 isLoading={generating}
                 className="h-9"
               >
-                <Sparkles className="h-4 w-4 mr-1.5" />
-                Regenerate
+                <Sparkles className="mr-1.5 h-4 w-4" />
+                New suggestion
               </Button>
               {suggested && (
                 <>
                   <Button variant="secondary" size="small" onClick={handleCopy} className="h-9">
-                    Copy Solution
+                    Copy
                   </Button>
-                  <Button
-                    variant="primary"
-                    size="small"
-                    onClick={handleApply}
-                    className="h-9"
-                  >
+                  <Button variant="primary" size="small" onClick={handleApply} className="h-9">
                     Use in reply
                   </Button>
                 </>
@@ -235,9 +239,9 @@ export const AiAssistantTab = ({
             </div>
           </div>
 
-          <div className="flex-1 bg-ui-bg-base p-6 lg:p-8">
+          <div className="bg-ui-bg-base flex-1 p-6 lg:p-8">
             <Textarea
-              className="w-full min-h-[260px] p-6 text-base leading-relaxed bg-ui-bg-subtle/30 border-ui-border-base focus:border-ui-fg-interactive transition-all resize-none shadow-inner italic"
+              className="bg-ui-bg-subtle/30 border-ui-border-base focus:border-ui-fg-interactive min-h-[260px] w-full resize-none p-6 text-base leading-relaxed italic shadow-inner transition-all"
               value={suggested}
               onChange={(e) => setDraft(e.target.value)}
               placeholder="No suggestion yet — regenerate to ask the AI for a draft."
@@ -247,17 +251,17 @@ export const AiAssistantTab = ({
       </div>
 
       <div className="space-y-6">
-        <div className="rounded-2xl border bg-ui-bg-base p-6 shadow-sm">
+        <div className="bg-ui-bg-base rounded-2xl border p-6 shadow-sm">
           <Text
             size="xsmall"
             weight="plus"
-            className="text-ui-fg-subtle mb-4 uppercase tracking-widest font-bold block"
+            className="text-ui-fg-subtle mb-4 block font-bold tracking-widest uppercase"
           >
-            Classification
+            AI classification
           </Text>
           <div className="space-y-4">
             <div>
-              <div className="flex items-center justify-between mb-1">
+              <div className="mb-1 flex items-center justify-between">
                 <Text size="small" className="text-ui-fg-subtle">
                   Category
                 </Text>
@@ -265,9 +269,9 @@ export const AiAssistantTab = ({
                   {formatLabel(analysis.category || 'Unknown')}
                 </Badge>
               </div>
-              <div className="w-full bg-ui-bg-subtle h-1 rounded-full overflow-hidden">
+              <div className="bg-ui-bg-subtle h-1 w-full overflow-hidden rounded-full">
                 <div
-                  className="h-full bg-ui-fg-interactive"
+                  className="bg-ui-fg-interactive h-full"
                   style={{ width: `${(analysis.category_confidence || 0) * 100}%` }}
                 />
               </div>
@@ -276,55 +280,43 @@ export const AiAssistantTab = ({
               <Text size="small" className="text-ui-fg-subtle">
                 Priority
               </Text>
-              <Badge
-                size="small"
-                color={analysis.suggested_priority === 'high' ? 'red' : 'orange'}
-              >
+              <Badge size="small" color={analysis.suggested_priority === 'high' ? 'red' : 'orange'}>
                 {formatLabel(analysis.suggested_priority || 'Normal')}
               </Badge>
             </div>
           </div>
         </div>
 
-        <div className="rounded-2xl border bg-ui-bg-base p-6 shadow-sm">
+        <div className="bg-ui-bg-base rounded-2xl border p-6 shadow-sm">
           <Text
             size="xsmall"
             weight="plus"
-            className="text-ui-fg-subtle mb-4 uppercase tracking-widest font-bold block"
+            className="text-ui-fg-subtle mb-4 block font-bold tracking-widest uppercase"
           >
-            Automation
+            Auto-reply
           </Text>
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <Text size="small" className="text-ui-fg-subtle">
-                Eligibility
+                Allowed for this ticket
               </Text>
-              {analysis.auto_reply_eligible ? (
-                <div className="flex items-center gap-1 text-ui-fg-success">
-                  <span className="h-2 w-2 rounded-full bg-ui-fg-success" />
-                  <Text size="xsmall" weight="plus">
-                    Eligible
-                  </Text>
-                </div>
-              ) : (
-                <Text size="xsmall" className="text-ui-fg-muted">
-                  Manual
-                </Text>
-              )}
+              <Text size="xsmall" weight="plus">
+                {analysis.auto_reply_eligible ? 'Yes' : 'No, needs a human'}
+              </Text>
             </div>
             <div className="flex items-center justify-between">
               <Text size="small" className="text-ui-fg-subtle">
-                Status
+                Sent automatically
               </Text>
               <Badge size="small" color={analysis.auto_replied ? 'green' : 'grey'}>
-                {analysis.auto_replied ? 'Processed' : 'Awaiting'}
+                {analysis.auto_replied ? 'Yes' : 'No'}
               </Badge>
             </div>
           </div>
         </div>
 
         <Button variant="secondary" className="w-full" onClick={onOpenSettings}>
-          Configure AI
+          AI settings
         </Button>
       </div>
     </div>

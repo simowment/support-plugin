@@ -30,6 +30,8 @@ export type PromptSettings = {
 
 export type AISettings = {
   enabled: boolean
+  /** True when provider, model, base URL and API key are all set. */
+  configured: boolean
   auto_reply_enabled: boolean
   provider: ProviderSettings
   prompts: PromptSettings
@@ -46,6 +48,12 @@ const SETTINGS_ENDPOINT = '/admin/tickets/ai-settings'
 
 export const fetchAnalysis = (ticketId: string) =>
   adminFetch<{ analysis: AIAnalysis }>(ANALYSIS_ENDPOINT(ticketId)).then((d) => d.analysis)
+
+/** Run the AI analysis for a ticket now (tickets that arrived before AI was set up). */
+export const analyzeTicketNow = (ticketId: string) =>
+  adminFetch<{ analysis: AIAnalysis }>(ANALYSIS_ENDPOINT(ticketId), { method: 'POST' }).then(
+    (d) => d.analysis,
+  )
 
 export const generateSuggestion = (ticketId: string) =>
   adminFetch<SuggestionResult>(SUGGEST_ENDPOINT(ticketId), { method: 'POST' })

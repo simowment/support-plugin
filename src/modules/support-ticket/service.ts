@@ -9,6 +9,7 @@ import { InboundEmailReceipt } from './models/inbound-email-receipt'
 import { EmailReplyToken } from './models/email-reply-token'
 import { OutboundEmailDraft } from './models/outbound-email-draft'
 import { buildTicketAttachmentUrl } from '../../api/shared/attachments'
+import { REPLY_DOMAIN_NOT_CONFIGURED_MESSAGE, SupportTicketError } from '../../lib/errors'
 import {
   resolveSupportTicketConfig,
   type ResolvedSupportTicketConfig,
@@ -613,21 +614,45 @@ export default class SupportTicketModuleService extends MedusaService({
     if (!ticket || ticket.customer_id || !ticket.contact_email) {
       throw new Error('Ticket is not an email-contact guest ticket')
     }
+    return this.issueReplyToken(ticketId, ticket.contact_email)
+  }
+
+  /**
+   * Store a reply token for a ticket. A later inbound email to `reply+<token>@<domain>`
+   * from `expectedSenderEmail` is appended to the ticket as a customer message.
+   */
+  private async issueReplyToken(
+    ticketId: string,
+    expectedSenderEmail: string,
+  ): Promise<{ replyToken: string; expectedSenderEmail: string }> {
+    const sender = expectedSenderEmail.trim().toLowerCase()
     const replyToken = randomBytes(32).toString('base64url')
     const now = new Date()
     await this.getPgConnection().raw(
       `insert into "ticket_email_reply_token" ("id", "token_hash", "expected_sender_email", "ticket_id", "created_at", "updated_at")
        values (?, ?, ?, ?, ?, ?)`,
-      [
-        this.newId('ter'),
-        this.hashReplyToken(replyToken),
-        ticket.contact_email,
-        ticketId,
-        now,
-        now,
-      ],
+      [this.newId('ter'), this.hashReplyToken(replyToken), sender, ticketId, now, now],
     )
-    return { replyToken, expectedSenderEmail: ticket.contact_email }
+    return { replyToken, expectedSenderEmail: sender }
+  }
+
+  /** True when `reply+<token>@<domain>` addresses can be issued (a valid reply domain is set). */
+  hasReplyDomain(): boolean {
+    const domain = this.config_.replyEmailDomain
+    return Boolean(domain && /^[a-z0-9.-]+$/.test(domain))
+  }
+
+  /**
+   * Reply-To address for an email sent to a ticket's customer: a one-time `reply+token@`
+   * address when the reply domain is set (their answer lands back on the ticket), else
+   * the support mailbox, else null (the email provider's default sender applies).
+   */
+  async resolveReplyToAddress(ticketId: string, recipientEmail: string): Promise<string | null> {
+    if (this.hasReplyDomain()) {
+      const token = await this.issueReplyToken(ticketId, recipientEmail)
+      return `reply+${token.replyToken}@${this.config_.replyEmailDomain}`
+    }
+    return this.config_.supportEmail ?? null
   }
 
   async saveGuestEmailDraft(
@@ -690,11 +715,18 @@ export default class SupportTicketModuleService extends MedusaService({
 
   async freezeGuestEmailDraft(id: string, expectedRevision: number, actorId: string) {
     const draft = await this.getGuestEmailDraft(id)
-    if (!draft) throw new Error('Draft cannot be sent')
+    if (!draft) throw new SupportTicketError('DRAFT_NOT_FOUND', 'Draft not found', 404)
     if (Number(draft.revision) !== expectedRevision)
-      throw new Error('Draft changed after review; reload it before sending')
+      throw new SupportTicketError(
+        'DRAFT_REVISION_CHANGED',
+        'The draft was edited after you reviewed it; reload it before sending',
+      )
     if (draft.frozen_payload) return draft
-    if (draft.status !== 'draft') throw new Error('Draft cannot be sent')
+    if (draft.status !== 'draft')
+      throw new SupportTicketError(
+        'DRAFT_NOT_SENDABLE',
+        `This draft was already ${String(draft.status)}; it cannot be sent again`,
+      )
     const ticket = await this.getTicketById(String(draft.ticket_id))
     if (
       !ticket ||
@@ -702,11 +734,18 @@ export default class SupportTicketModuleService extends MedusaService({
       !ticket.contact_email ||
       ticket.contact_email !== draft.recipient_email
     )
-      throw new Error('Guest ticket recipient changed')
-    const token = await this.issueGuestEmailReplyToken(ticket.id)
+      throw new SupportTicketError(
+        'RECIPIENT_CHANGED',
+        "The ticket's email address changed after this draft was written; write a new draft",
+      )
     const domain = this.config_.replyEmailDomain
-    if (!domain || !/^[a-z0-9.-]+$/.test(domain))
-      throw new Error('Support reply email domain is not configured')
+    if (!this.hasReplyDomain() || !domain)
+      throw new SupportTicketError(
+        'REPLY_DOMAIN_NOT_CONFIGURED',
+        REPLY_DOMAIN_NOT_CONFIGURED_MESSAGE,
+        400,
+      )
+    const token = await this.issueGuestEmailReplyToken(ticket.id)
     const replyTo = `reply+${token.replyToken}@${domain}`
     const body = String(draft.body)
     const html = `<div style="white-space:pre-wrap;font-family:Arial,sans-serif">${escapeEmailHtml(body)}</div>`
@@ -736,7 +775,10 @@ export default class SupportTicketModuleService extends MedusaService({
     }
     const frozen = await this.getGuestEmailDraft(id)
     if (!frozen?.frozen_payload || Number(frozen.revision) !== expectedRevision) {
-      throw new Error('Draft changed while send was being prepared; review and retry')
+      throw new SupportTicketError(
+        'DRAFT_REVISION_CHANGED',
+        'The draft changed while the email was being prepared; review it and try again',
+      )
     }
     return frozen
   }
@@ -1033,6 +1075,31 @@ export default class SupportTicketModuleService extends MedusaService({
       id: ticketId,
       ...input,
     })
+    if (
+      input.status === TicketStatus.CLOSED &&
+      currentTicket.status !== TicketStatus.CLOSED &&
+      this.eventBusService_
+    ) {
+      try {
+        await this.eventBusService_.emit({
+          name: TicketEventName.CLOSED,
+          data: {
+            id: ticketId,
+            subject: currentTicket.subject,
+            category: currentTicket.category,
+            customer_id: currentTicket.customer_id ?? undefined,
+            order_id: currentTicket.order_id,
+            status: TicketStatus.CLOSED,
+            performed_by_type: performedByType ?? null,
+            performed_by_id: performedById ?? null,
+          },
+        })
+      } catch (error) {
+        this.logger_.warn(
+          `[Support Tickets] closed event emit failed: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
+    }
     return updated
   }
 
