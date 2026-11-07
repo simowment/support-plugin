@@ -19,29 +19,29 @@ export function isSupportTicketError(error: unknown): error is SupportTicketErro
 }
 
 /**
- * The igm commands that set up mail, worded the same way everywhere (tickets UI, API
- * refusals, README). `provision mail` sets up a Mailgun domain end to end, including the
- * inbound routes and the `reply+<token>@` reply domain that guest replies need.
- * `configure mail` stores existing SMTP or Mailgun credentials; it can send email but only
- * sets a reply domain when its input carries `support_inbound`.
+ * Mail setup refusals, worded the same way everywhere (tickets UI, API refusals, README).
+ * They name the options of this plugin and of the email queue; a host that sets these up
+ * elsewhere adds its own hint with the `setupHelp` module option.
  */
-export const MAIL_SETUP_COMMAND = 'igm shop provision mail --shop <slug>'
-export const MAIL_CONFIGURE_COMMAND = 'igm shop configure mail --shop <slug>'
 
 /** Shown when guest email replies cannot be sent because no reply domain is set up. */
 export const REPLY_DOMAIN_NOT_CONFIGURED_MESSAGE =
   'Guest replies cannot be emailed: this shop has no reply domain for reply+ addresses. ' +
-  `Run \`${MAIL_SETUP_COMMAND}\` to set up support email with replies. Drafts can still be saved.`
+  'Set the reply_email_domain option of the supportTicket module (or SUPPORT_REPLY_EMAIL_DOMAIN), route that ' +
+  'domain\'s inbound mail to POST /hooks/mailgun/inbound, and restart the backend. Drafts can still be saved.'
 
 /** Shown when guest email replies cannot be sent because inbound email is turned off. */
 export const INBOUND_EMAIL_DISABLED_MESSAGE =
   'Guest replies cannot be emailed: inbound email is turned off on this shop, so a guest\'s answer ' +
-  `would never reach the ticket. Run \`${MAIL_SETUP_COMMAND}\` to turn on support email with replies. Drafts can still be saved.`
+  'would never reach the ticket. Set the mailgun_inbound_enabled and mailgun_webhook_signing_key options of the ' +
+  'supportTicket module (or SUPPORT_MAILGUN_INBOUND_ENABLED=true and MAILGUN_WEBHOOK_SIGNING_KEY) and restart the ' +
+  'backend. Drafts can still be saved.'
 
 /** Shown when no email queue (medusa-notification-smtp) is registered on the backend. */
 export const EMAIL_QUEUE_NOT_CONFIGURED_MESSAGE =
   'Email sending is not set up for this shop (no email queue). ' +
-  `Run \`${MAIL_SETUP_COMMAND}\` (Mailgun), or \`${MAIL_CONFIGURE_COMMAND}\` with an existing SMTP or Mailgun account.`
+  'Register an email queue module such as medusa-notification-smtp (its container key is the email_queue_module ' +
+  'option, default "emailQueue") with SMTP or Mailgun delivery, and restart the backend.'
 
 /** Refusal for a plain admin reply on a guest ticket: guests have no account, so only the email draft flow reaches them. */
 export const GUEST_TICKET_USE_EMAIL_DRAFT_MESSAGE =

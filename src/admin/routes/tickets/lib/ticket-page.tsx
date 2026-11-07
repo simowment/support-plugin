@@ -35,6 +35,8 @@ export type TicketsConfig = {
   guest_replies: { can_send: boolean; reason: string | null }
   ai: { enabled: boolean; configured: boolean; auto_reply_enabled: boolean }
   discord_notifications: boolean
+  /** Host hint for mail setup (module option `setupHelp`). Older backends omit it. */
+  setup_help?: { text: string | null; url: string | null } | null
 }
 
 export type AdminUser = {

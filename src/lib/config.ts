@@ -73,7 +73,25 @@ export type SupportTicketModuleOptions = {
    * Default: true. Guest (email) tickets always use the reviewed draft flow instead.
    */
   email_customer_replies?: boolean
+  /**
+   * Optional host hint shown in the admin under the neutral mail setup text, for hosts
+   * that set up mail outside the admin. Returned by GET /admin/tickets/config as
+   * `setup_help`. No env fallback.
+   */
+  setupHelp?: SetupHelp
   [key: string]: unknown
+}
+
+export type SetupHelp = { text?: string; url?: string }
+
+export type ResolvedSetupHelp = { text: string | null; url: string | null } | null
+
+function resolveSetupHelp(value: unknown): ResolvedSetupHelp {
+  if (!value || typeof value !== 'object') return null
+  const raw = value as Record<string, unknown>
+  const text = optionalString(raw.text) ?? null
+  const url = optionalString(raw.url) ?? null
+  return text || url ? { text, url } : null
 }
 
 export const DEFAULT_EMAIL_QUEUE_MODULE = 'emailQueue'
@@ -87,6 +105,7 @@ export type ResolvedSupportTicketConfig = {
   emailQueueModule: string
   supportEmail?: string
   emailCustomerReplies: boolean
+  setupHelp: ResolvedSetupHelp
 }
 
 export function resolveSupportTicketConfig(
@@ -112,6 +131,7 @@ export function resolveSupportTicketConfig(
       optionalString(options.support_email) ?? optionalString(env.SUPPORT_EMAIL)
     )?.toLowerCase(),
     emailCustomerReplies: optionalBoolean(options.email_customer_replies) ?? true,
+    setupHelp: resolveSetupHelp(options.setupHelp),
   }
 }
 

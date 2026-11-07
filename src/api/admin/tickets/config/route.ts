@@ -12,7 +12,8 @@ import {
  * GET /admin/tickets/config
  *
  * What the support inbox can do on this shop, for the admin help strip and to disable
- * controls that cannot work. Never returns secrets.
+ * controls that cannot work. `setup_help` is the host's optional hint (module option
+ * `setupHelp`). Never returns secrets.
  */
 export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) {
   const service = resolveTicketService(req)
@@ -62,5 +63,6 @@ export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) 
     },
     ai,
     discord_notifications: Boolean(config.discordWebhookUrl),
+    setup_help: config.setupHelp,
   })
 }

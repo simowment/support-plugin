@@ -51,8 +51,8 @@ function Item({
 
 /**
  * One-glance explanation of the support inbox: where tickets come from and what this
- * shop can do with them (email intake, emailed replies, AI). Setup itself happens in
- * the igm CLI.
+ * shop can do with them (email intake, emailed replies, AI). Setup itself happens in the
+ * backend configuration; the host's `setup_help` hint is shown when it sends one.
  */
 export function SupportHelpStrip({ config }: { config: TicketsConfig | null }) {
   const [hidden, setHidden] = useState(readHidden)
@@ -77,13 +77,33 @@ export function SupportHelpStrip({ config }: { config: TicketsConfig | null }) {
   return (
     <div className="bg-ui-bg-base flex-shrink-0 border-b px-4 py-3 lg:px-6">
       <div className="mb-2 flex items-start justify-between gap-4">
-        <Text size="small" className="text-ui-fg-subtle">
-          Customer questions from the storefront contact form and the support mailbox. Reply here;
-          customers get your answer by email. Set up email (sending and replies) with{' '}
-          <code className="text-xs">igm shop provision mail --shop &lt;slug&gt;</code>; an existing
-          SMTP account goes in with{' '}
-          <code className="text-xs">igm shop configure mail --shop &lt;slug&gt;</code>.
-        </Text>
+        <div className="flex flex-col gap-y-1">
+          <Text size="small" className="text-ui-fg-subtle">
+            Customer questions from the storefront contact form and the support mailbox. Reply here;
+            customers get your answer by email. Email sending comes from the email queue (SMTP or
+            Mailgun); email intake and guest replies come from this plugin's inbound options
+            (inbound recipients, reply domain, Mailgun inbound webhook). Both are set in the backend
+            configuration.
+          </Text>
+          {config?.setup_help && (config.setup_help.text || config.setup_help.url) && (
+            <Text size="xsmall" className="text-ui-fg-muted">
+              {config.setup_help.text && (
+                <span className="whitespace-pre-wrap break-words">{config.setup_help.text}</span>
+              )}
+              {config.setup_help.text && config.setup_help.url && ' '}
+              {config.setup_help.url && (
+                <a
+                  href={config.setup_help.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-ui-fg-interactive hover:underline"
+                >
+                  {config.setup_help.text ? 'More help' : 'Setup help'}
+                </a>
+              )}
+            </Text>
+          )}
+        </div>
         <button
           type="button"
           className="text-ui-fg-subtle hover:text-ui-fg-base flex-shrink-0 text-xs underline underline-offset-4"

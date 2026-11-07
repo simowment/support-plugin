@@ -109,6 +109,7 @@ variable is read only when the matching option is unset.
 | `email_queue_module`          | none                              | `"emailQueue"` | Container key of the email queue used to email replies (customer and guest).                                                                    |
 | `support_email`               | `SUPPORT_EMAIL`                   | none           | Support mailbox, used as the Reply-To of emailed customer replies when no reply domain is set.                                                  |
 | `email_customer_replies`      | none                              | `true`         | Email admin replies (and AI auto-replies) to signed-in customers. Set `false` to only store them on the ticket.                                  |
+| `setupHelp`                   | none                              | none           | `{ text?: string; url?: string }`. Host hint shown in the admin help strip under the mail setup text (for hosts that set up mail outside the admin). Returned as `setup_help` (`{ text, url }` or `null`) by `GET /admin/tickets/config`. |
 
 ### `supportTicketAi` module options
 
@@ -167,7 +168,7 @@ ticket). Categories: `order_issue`, `return_request`, `fulfillment_issue`, `prod
 | Method   | Path                                         | Purpose                                                                                |
 | -------- | -------------------------------------------- | -------------------------------------------------------------------------------------- |
 | `GET`    | `/admin/tickets`                             | List tickets (`status`, `category`, `customer_id`, `assigned_to`, `q`, `tab`, paging). Each row has `customer` (name/email or null) and `customer_deleted`. |
-| `GET`    | `/admin/tickets/config`                      | What the inbox can do: email intake, emailed replies, guest replies (with the reason when not), AI state. No secrets. |
+| `GET`    | `/admin/tickets/config`                      | What the inbox can do: email intake, emailed replies, guest replies (with the reason when not), AI state, and the host's `setup_help` hint. No secrets. |
 | `GET`    | `/admin/tickets/:id`                         | Ticket with messages, events and notes.                                                |
 | `POST`   | `/admin/tickets/:id`                         | Update `status` / `assigned_to`.                                                       |
 | `DELETE` | `/admin/tickets/:id`                         | Delete a ticket and its data.                                                          |
@@ -199,8 +200,8 @@ ticket). Categories: `order_issue`, `return_request`, `fulfillment_issue`, `prod
 
 - **Support tickets** route (`/app/tickets`):
   - a help strip (hideable) explaining where tickets come from and whether email intake, emailed replies, guest
-    replies and AI are working on this shop, naming `igm shop provision mail` (Mailgun, with replies) and
-    `igm shop configure mail` (existing SMTP or Mailgun account) for setup;
+    replies and AI are working on this shop, which options set them up, and the host's `setupHelp` hint when
+    one is configured;
   - the list shows the customer's name ("Deleted customer" when the account is gone), with status, category and
     "Assigned to me" filters and a labelled Refresh;
   - the ticket view has the conversation with a reply box (it says where the reply goes), internal notes, a readable
