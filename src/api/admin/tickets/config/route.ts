@@ -4,6 +4,7 @@ import { SUPPORT_TICKET_AI_MODULE } from '../../../../modules/ai/constants'
 import type SupportTicketAIModuleService from '../../../../modules/ai/service'
 import {
   EMAIL_QUEUE_NOT_CONFIGURED_MESSAGE,
+  INBOUND_EMAIL_DISABLED_MESSAGE,
   REPLY_DOMAIN_NOT_CONFIGURED_MESSAGE,
 } from '../../../../lib/errors'
 
@@ -18,6 +19,8 @@ export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) 
   const config = service.getConfig()
   const queueRegistered = req.scope.hasRegistration(config.emailQueueModule)
   const replyDomain = service.hasReplyDomain()
+  // reply+ addresses only bring answers back to the ticket when inbound email is on.
+  const repliesReachTicket = service.canReceiveEmailReplies()
 
   let ai = { enabled: false, configured: false, auto_reply_enabled: false }
   if (req.scope.hasRegistration(SUPPORT_TICKET_AI_MODULE)) {
@@ -40,7 +43,7 @@ export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) 
     customer_replies: {
       email_enabled: config.emailCustomerReplies,
       can_send: queueRegistered && config.emailCustomerReplies,
-      reply_to: replyDomain ? 'ticket' : config.supportEmail ? 'support_mailbox' : 'store_sender',
+      reply_to: repliesReachTicket ? 'ticket' : config.supportEmail ? 'support_mailbox' : 'store_sender',
       reason: !queueRegistered
         ? noQueue
         : !config.emailCustomerReplies
@@ -48,12 +51,14 @@ export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) 
           : null,
     },
     guest_replies: {
-      can_send: queueRegistered && replyDomain,
+      can_send: queueRegistered && repliesReachTicket,
       reason: !queueRegistered
         ? noQueue
         : !replyDomain
           ? REPLY_DOMAIN_NOT_CONFIGURED_MESSAGE
-          : null,
+          : !repliesReachTicket
+            ? INBOUND_EMAIL_DISABLED_MESSAGE
+            : null,
     },
     ai,
     discord_notifications: Boolean(config.discordWebhookUrl),

@@ -33,6 +33,11 @@ export const REPLY_DOMAIN_NOT_CONFIGURED_MESSAGE =
   'Guest replies cannot be emailed: this shop has no reply domain for reply+ addresses. ' +
   `Run \`${MAIL_SETUP_COMMAND}\` to set up support email with replies. Drafts can still be saved.`
 
+/** Shown when guest email replies cannot be sent because inbound email is turned off. */
+export const INBOUND_EMAIL_DISABLED_MESSAGE =
+  'Guest replies cannot be emailed: inbound email is turned off on this shop, so a guest\'s answer ' +
+  `would never reach the ticket. Run \`${MAIL_SETUP_COMMAND}\` to turn on support email with replies. Drafts can still be saved.`
+
 /** Shown when no email queue (medusa-notification-smtp) is registered on the backend. */
 export const EMAIL_QUEUE_NOT_CONFIGURED_MESSAGE =
   'Email sending is not set up for this shop (no email queue). ' +

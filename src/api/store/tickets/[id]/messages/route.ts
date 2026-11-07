@@ -8,6 +8,7 @@ import {
 import { SenderType } from '../../../../../modules/support-ticket'
 import type { MessageBody } from '../../../../middlewares'
 import { attachTicketAttachmentUrls } from '../../../../shared/attachments'
+import { attachmentsUploadedBy } from '../../../../shared/upload'
 
 export async function POST(req: AuthenticatedMedusaRequest<MessageBody>, res: MedusaResponse) {
   const customerId = req.auth_context.actor_id
@@ -17,6 +18,14 @@ export async function POST(req: AuthenticatedMedusaRequest<MessageBody>, res: Me
   const cleanMessage = message ? sanitize(message) : ''
   if (!cleanMessage && !attachments?.length)
     return sendError(res, 400, 'VALIDATION', 'Message or attachments are required.')
+
+  if (!attachmentsUploadedBy(req, attachments))
+    return sendError(
+      res,
+      400,
+      'ATTACHMENT_NOT_UPLOADED',
+      'Attachments must be files you uploaded with POST /store/tickets/upload.',
+    )
 
   const service = resolveTicketService(req)
   const result = await service.getTicketWithMessages(req.params.id)

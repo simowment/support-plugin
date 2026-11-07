@@ -9,7 +9,11 @@ import { InboundEmailReceipt } from './models/inbound-email-receipt'
 import { EmailReplyToken } from './models/email-reply-token'
 import { OutboundEmailDraft } from './models/outbound-email-draft'
 import { buildTicketAttachmentUrl } from '../../api/shared/attachments'
-import { REPLY_DOMAIN_NOT_CONFIGURED_MESSAGE, SupportTicketError } from '../../lib/errors'
+import {
+  INBOUND_EMAIL_DISABLED_MESSAGE,
+  REPLY_DOMAIN_NOT_CONFIGURED_MESSAGE,
+  SupportTicketError,
+} from '../../lib/errors'
 import {
   resolveSupportTicketConfig,
   type ResolvedSupportTicketConfig,
@@ -643,12 +647,20 @@ export default class SupportTicketModuleService extends MedusaService({
   }
 
   /**
+   * True when an emailed answer to a `reply+<token>@` address lands back on the ticket:
+   * a reply domain is set and inbound email (the Mailgun webhook) is turned on.
+   */
+  canReceiveEmailReplies(): boolean {
+    return this.hasReplyDomain() && this.config_.mailgunInboundEnabled
+  }
+
+  /**
    * Reply-To address for an email sent to a ticket's customer: a one-time `reply+token@`
-   * address when the reply domain is set (their answer lands back on the ticket), else
+   * address when email replies can be received (their answer lands back on the ticket), else
    * the support mailbox, else null (the email provider's default sender applies).
    */
   async resolveReplyToAddress(ticketId: string, recipientEmail: string): Promise<string | null> {
-    if (this.hasReplyDomain()) {
+    if (this.canReceiveEmailReplies()) {
       const token = await this.issueReplyToken(ticketId, recipientEmail)
       return `reply+${token.replyToken}@${this.config_.replyEmailDomain}`
     }
@@ -745,6 +757,8 @@ export default class SupportTicketModuleService extends MedusaService({
         REPLY_DOMAIN_NOT_CONFIGURED_MESSAGE,
         400,
       )
+    if (!this.config_.mailgunInboundEnabled)
+      throw new SupportTicketError('INBOUND_EMAIL_DISABLED', INBOUND_EMAIL_DISABLED_MESSAGE, 400)
     const token = await this.issueGuestEmailReplyToken(ticket.id)
     const replyTo = `reply+${token.replyToken}@${domain}`
     const body = String(draft.body)
