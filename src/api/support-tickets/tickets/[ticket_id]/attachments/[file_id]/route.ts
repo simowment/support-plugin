@@ -30,7 +30,19 @@ export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) 
   }
 
   const fileService = req.scope.resolve<IFileModuleService>(Modules.FILE)
-  const buffer = await fileService.getAsBuffer(fileId)
+  let buffer: Buffer
+  try {
+    buffer = await fileService.getAsBuffer(fileId)
+  } catch (error) {
+    // The message still lists the file but storage no longer has it (deleted or
+    // never uploaded): that is a missing file, not a server crash.
+    const name = (error as { name?: string; Code?: string } | null)?.name
+    const code = (error as { Code?: string; code?: string } | null)?.Code ?? (error as { code?: string } | null)?.code
+    if (name === 'NoSuchKey' || code === 'NoSuchKey' || code === 'ENOENT' || name === 'NotFound') {
+      return sendError(res, 404, 'ATTACHMENT_FILE_MISSING', 'This attachment is no longer stored')
+    }
+    throw error
+  }
 
   res.setHeader(CACHE_CONTROL_HEADER, CACHE_CONTROL_PRIVATE)
   res.setHeader(CONTENT_TYPE_HEADER, attachment.mimeType)
