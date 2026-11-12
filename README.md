@@ -30,7 +30,7 @@ endpoint.
 
 | Requirement | Version                                                                      |
 | ----------- | ---------------------------------------------------------------------------- |
-| Medusa      | `@medusajs/framework`, `@medusajs/medusa`, `@medusajs/core-flows` **2.21.2** |
+| Medusa      | `@medusajs/framework`, `@medusajs/medusa`, `@medusajs/core-flows` **2.22.6** |
 | Node.js     | `>=20.19.0`                                                                  |
 | Database    | PostgreSQL (the module uses the Medusa PG connection for inbound email)      |
 | React       | `^18` (Admin extension)                                                      |

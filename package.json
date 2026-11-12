@@ -60,23 +60,23 @@
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.61",
-    "@medusajs/admin-sdk": "2.21.2",
-    "@medusajs/js-sdk": "2.21.2",
-    "@medusajs/icons": "^2.21.2",
+    "@medusajs/admin-sdk": "2.22.6",
+    "@medusajs/js-sdk": "2.22.6",
+    "@medusajs/icons": "^2.22.6",
     "@medusajs/ui": "^4.1.15",
     "ai": "^6.0.175",
     "multer": "^2.0.2",
     "zod": "^3.24.0"
   },
   "peerDependencies": {
-    "@medusajs/core-flows": "2.21.2",
-    "@medusajs/framework": "2.21.2",
-    "@medusajs/medusa": "2.21.2",
+    "@medusajs/core-flows": "2.22.6",
+    "@medusajs/framework": "2.22.6",
+    "@medusajs/medusa": "2.22.6",
     "react": "^18.0.0",
     "react-dom": "^18.0.0"
   },
   "devDependencies": {
-    "@medusajs/cli": "2.21.2",
+    "@medusajs/cli": "2.22.6",
     "@swc/core": "^1.15.26",
     "@types/multer": "^2.1.0",
     "@types/react": "^18.3.2",
