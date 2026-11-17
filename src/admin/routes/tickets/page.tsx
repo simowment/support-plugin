@@ -29,7 +29,15 @@ import {
 } from '@medusajs/ui'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { adminFetch } from '../../lib/api'
-import { InstallerNote } from '../../components/installer-note'
+import { InstallerHint } from '../../components/ui/installer-hint'
+import { ErrorState, errorMessage } from '../../components/ui/error-state'
+import { useUnsavedGuard } from '../../components/ui/use-unsaved-guard'
+import {
+  formatDate as formatDay,
+  formatDateTime,
+  formatRelative,
+  plural,
+} from '../../components/ui/format'
 import { analyzeTicketNow, type AIAnalysis } from './lib/ai'
 import { formatLabel } from './lib/format'
 import { AiAssistantTab } from './components/AiAssistantTab'
@@ -69,7 +77,19 @@ type TicketListResponse = {
   offset?: number
 }
 
-const errorMessage = (error: unknown) => (error instanceof Error ? error.message : undefined)
+/** An unsent reply, kept per ticket so switching tickets never moves it to another customer. */
+type ReplyDraft = { text: string; attachments: Attachment[] }
+
+const EMPTY_DRAFT: ReplyDraft = { text: '', attachments: [] }
+
+const draftHasContent = (draft: ReplyDraft | undefined) =>
+  Boolean(draft && (draft.text.trim() || draft.attachments.length > 0))
+
+/** "Order #32" when the number is known; otherwise the end of the id, as before. */
+const orderLabel = (ticket: Pick<Ticket, 'order_id' | 'order_display_id'>) =>
+  ticket.order_display_id != null
+    ? `Order #${ticket.order_display_id}`
+    : `Order ${ticket.order_id?.slice(-8) ?? ''}`
 
 export default function SupportTicketsPage() {
   const prompt = usePrompt()
@@ -78,26 +98,33 @@ export default function SupportTicketsPage() {
   const [ticketOffset, setTicketOffset] = useState(0)
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null)
   const [details, setDetails] = useState<TicketDetails | null>(null)
-  const [analysis, setAnalysis] = useState<AIAnalysis | null>(null)
+  // The AI analysis is kept with the ticket it was made for, so a late response or a switch
+  // of ticket can never show (or insert) another customer's suggested reply.
+  const [analysisState, setAnalysisState] = useState<{
+    ticketId: string
+    analysis: AIAnalysis | null
+  } | null>(null)
   const [statusFilter, setStatusFilter] = useState('all')
   const [ticketTab, setTicketTab] = useState<'active' | 'closed'>('active')
   const [categoryFilter, setCategoryFilter] = useState('all')
   const [assignedToMe, setAssignedToMe] = useState(false)
   const [search, setSearch] = useState('')
-  const [reply, setReply] = useState('')
+  const [drafts, setDrafts] = useState<Record<string, ReplyDraft>>({})
   const [loadingTickets, setLoadingTickets] = useState(true)
+  /** The last list load failed (S2): shown above the last list instead of "No tickets here". */
+  const [ticketsError, setTicketsError] = useState<unknown>(null)
   const [loadingDetails, setLoadingDetails] = useState(false)
   const [loadingAnalysis, setLoadingAnalysis] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([])
   const [uploadingFiles, setUploadingFiles] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [customerName, setCustomerName] = useState<string | null>(null)
   const [customerEmail, setCustomerEmail] = useState<string | null>(null)
   const [customerMissing, setCustomerMissing] = useState(false)
   const [customerTickets, setCustomerTickets] = useState<Ticket[]>([])
-  const [noteContent, setNoteContent] = useState('')
+  /** Unsaved internal notes, per ticket, like reply drafts. */
+  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({})
   const [addingNote, setAddingNote] = useState(false)
   const [showMergeModal, setShowMergeModal] = useState(false)
   const [mergeSourceId, setMergeSourceId] = useState<string | null>(null)
@@ -110,6 +137,59 @@ export default function SupportTicketsPage() {
   const [config, setConfig] = useState<TicketsConfig | null>(null)
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([])
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+
+  // Read inside fetchTickets without re-creating it (and re-polling) on every keystroke.
+  const selectedTicketIdRef = useRef(selectedTicketId)
+  selectedTicketIdRef.current = selectedTicketId
+  const analysis =
+    analysisState && analysisState.ticketId === selectedTicketId ? analysisState.analysis : null
+  const draftsRef = useRef(drafts)
+  draftsRef.current = drafts
+  /** A ticket opened from the customer's history may sit outside the current filter. */
+  const keepOutsideListRef = useRef<string | null>(null)
+  /** Last list row seen per ticket, so a ticket that left the filter keeps its header. */
+  const knownRowsRef = useRef(new Map<string, Ticket>())
+  /** Only the newest list request may update the list (polls and filter changes overlap). */
+  const ticketsRequestRef = useRef(0)
+  /** The customer whose name and email are loading, so a late answer is not shown on another ticket. */
+  const customerRequestRef = useRef<string | null>(null)
+
+  const noteContent = selectedTicketId ? (noteDrafts[selectedTicketId] ?? '') : ''
+  const setNoteFor = (ticketId: string, text: string) =>
+    setNoteDrafts((prev) => {
+      const copy = { ...prev }
+      if (text) copy[ticketId] = text
+      else delete copy[ticketId]
+      return copy
+    })
+
+  const reply = selectedTicketId ? (drafts[selectedTicketId]?.text ?? '') : ''
+  const pendingAttachments = selectedTicketId
+    ? (drafts[selectedTicketId]?.attachments ?? EMPTY_DRAFT.attachments)
+    : EMPTY_DRAFT.attachments
+
+  const updateDraft = useCallback((ticketId: string, change: (draft: ReplyDraft) => ReplyDraft) => {
+    setDrafts((prev) => {
+      const next = change(prev[ticketId] ?? EMPTY_DRAFT)
+      const copy = { ...prev }
+      if (draftHasContent(next)) copy[ticketId] = next
+      else delete copy[ticketId]
+      return copy
+    })
+  }, [])
+  const setReply = (text: string | ((prev: string) => string)) => {
+    if (!selectedTicketId) return
+    updateDraft(selectedTicketId, (draft) => ({
+      ...draft,
+      text: typeof text === 'function' ? text(draft.text) : text,
+    }))
+  }
+
+  const unsentDrafts =
+    Object.values(drafts).filter(draftHasContent).length +
+    Object.values(noteDrafts).filter((text) => text.trim()).length
+  // S6: leaving the inbox (sidebar link, Back, closing the tab) asks before unsent replies are lost.
+  useUnsavedGuard(unsentDrafts > 0)
 
   const handleTabChange = (value: string) => {
     if (value === 'conversation' || value === 'notes' || value === 'events' || value === 'ai') {
@@ -126,14 +206,21 @@ export default function SupportTicketsPage() {
     }
   }, [adminUsers, currentUserId])
 
+  const selectedRow = selectedTicketId
+    ? (tickets.find((ticket) => ticket.id === selectedTicketId) ??
+      knownRowsRef.current.get(selectedTicketId))
+    : undefined
   const selectedTicket = selectedTicketId
     ? details?.ticket.id === selectedTicketId
-      ? {
-          ...tickets.find((ticket) => ticket.id === selectedTicketId),
-          ...details.ticket,
-        }
-      : tickets.find((ticket) => ticket.id === selectedTicketId)
+      ? { ...selectedRow, ...details.ticket }
+      : selectedRow
     : null
+  /** The open ticket is not in the list on the left (filter, search, page or its status changed). */
+  const selectedOutsideList = Boolean(
+    selectedTicketId &&
+    !loadingTickets &&
+    !tickets.some((ticket) => ticket.id === selectedTicketId),
+  )
 
   const currentPage = Math.floor(ticketOffset / TICKETS_PAGE_SIZE) + 1
   const totalPages = Math.max(1, Math.ceil(ticketCount / TICKETS_PAGE_SIZE))
@@ -169,6 +256,7 @@ export default function SupportTicketsPage() {
 
   const fetchTickets = useCallback(
     async (requestedOffset = ticketOffset) => {
+      const requestId = ++ticketsRequestRef.current
       setLoadingTickets(true)
       try {
         const params = new URLSearchParams({
@@ -184,56 +272,60 @@ export default function SupportTicketsPage() {
         if (term) params.set('q', term)
 
         const data = await adminFetch<TicketListResponse>(`/admin/tickets?${params.toString()}`)
+        if (requestId !== ticketsRequestRef.current) return
         const nextTickets = data.tickets ?? []
         const nextCount = data.count ?? nextTickets.length
         const lastPageOffset = getLastTicketPageOffset(nextCount)
 
+        setTicketsError(null)
         if (requestedOffset > lastPageOffset) {
           setTicketCount(nextCount)
           setTicketOffset(lastPageOffset)
           return
         }
 
-        const nextSelectedTicketId =
-          selectedTicketId && nextTickets.some((ticket) => ticket.id === selectedTicketId)
-            ? selectedTicketId
-            : (nextTickets[0]?.id ?? null)
+        for (const ticket of nextTickets) knownRowsRef.current.set(ticket.id, ticket)
+
+        // Never move away from a ticket with an unsent reply, or one the owner opened from the
+        // customer's history: it stays open with a notice that it is not in the list.
+        const current = selectedTicketIdRef.current
+        const keepCurrent =
+          current !== null &&
+          (nextTickets.some((ticket) => ticket.id === current) ||
+            draftHasContent(draftsRef.current[current]) ||
+            keepOutsideListRef.current === current)
+        const nextSelectedTicketId = keepCurrent ? current : (nextTickets[0]?.id ?? null)
 
         setTickets(nextTickets)
         setTicketCount(nextCount)
 
-        if (nextSelectedTicketId !== selectedTicketId) {
+        if (nextSelectedTicketId !== current) {
           setSelectedTicketId(nextSelectedTicketId)
           setDetails(null)
-          setAnalysis(null)
+          setAnalysisState(null)
         }
       } catch (error) {
+        if (requestId !== ticketsRequestRef.current) return
         console.error('[tickets] fetchTickets failed', error)
-        toast.error('Could not load tickets', { description: errorMessage(error) })
+        // S2: the error shows in the list (with Try again); the last list stays visible.
+        setTicketsError(error)
       } finally {
-        setLoadingTickets(false)
+        if (requestId === ticketsRequestRef.current) setLoadingTickets(false)
       }
     },
-    [
-      assignedToMe,
-      categoryFilter,
-      currentUserId,
-      search,
-      selectedTicketId,
-      statusFilter,
-      ticketOffset,
-      ticketTab,
-    ],
+    [assignedToMe, categoryFilter, currentUserId, search, statusFilter, ticketOffset, ticketTab],
   )
 
   const fetchAnalysis = useCallback(async (ticketId: string) => {
     setLoadingAnalysis(true)
     try {
       const data = await adminFetch<{ analysis: AIAnalysis }>(`/admin/tickets/${ticketId}/ai`)
-      setAnalysis(data.analysis)
+      // Drop a response that arrives after the owner opened another ticket.
+      if (selectedTicketIdRef.current !== ticketId) return
+      setAnalysisState({ ticketId, analysis: data.analysis })
     } catch (error) {
       console.error(`[tickets] fetchAnalysis failed for ${ticketId}`, error)
-      setAnalysis(null)
+      if (selectedTicketIdRef.current === ticketId) setAnalysisState({ ticketId, analysis: null })
     } finally {
       setLoadingAnalysis(false)
     }
@@ -254,10 +346,12 @@ export default function SupportTicketsPage() {
   }, [])
 
   const fetchCustomer = useCallback(async (customerId: string) => {
+    customerRequestRef.current = customerId
     try {
       const data = await adminFetch<{
         customer: { first_name?: string; last_name?: string; email?: string }
       }>(`/admin/customers/${customerId}`)
+      if (customerRequestRef.current !== customerId) return
       const customer = data.customer
       setCustomerMissing(false)
       setCustomerName(
@@ -267,6 +361,7 @@ export default function SupportTicketsPage() {
       )
       setCustomerEmail(customer?.email ?? null)
     } catch (error) {
+      if (customerRequestRef.current !== customerId) return
       const status = (error as { status?: number }).status
       if (status !== 404) console.error(`[tickets] fetchCustomer failed for ${customerId}`, error)
       // A 404 means the customer account was deleted (for example by a privacy request).
@@ -284,6 +379,9 @@ export default function SupportTicketsPage() {
         offset: '0',
       })
       const data = await adminFetch<TicketListResponse>(`/admin/tickets?${params.toString()}`)
+      for (const ticket of data.tickets ?? []) {
+        if (!knownRowsRef.current.has(ticket.id)) knownRowsRef.current.set(ticket.id, ticket)
+      }
       setCustomerTickets(data.tickets ?? [])
     } catch (error) {
       console.error(`[tickets] fetchCustomerTickets failed for ${customerId}`, error)
@@ -323,12 +421,16 @@ export default function SupportTicketsPage() {
 
   const sendReply = async () => {
     if (!selectedTicketId || !selectedTicket?.customer_id) return
-    if (!reply.trim() && pendingAttachments.length === 0) return
+    // Everything is taken from this ticket now, so switching tickets while it sends is safe.
+    const ticketId = selectedTicketId
+    const draft = drafts[ticketId] ?? EMPTY_DRAFT
+    const recipient = customerEmail
+    if (!draftHasContent(draft)) return
     setSaving(true)
     try {
-      const body: Record<string, unknown> = { message: reply.trim() || '(attachment)' }
-      if (pendingAttachments.length > 0) {
-        body.attachments = pendingAttachments.map((a) => ({
+      const body: Record<string, unknown> = { message: draft.text.trim() || '(attachment)' }
+      if (draft.attachments.length > 0) {
+        body.attachments = draft.attachments.map((a) => ({
           id: a.id,
           url: a.url,
           filename: a.filename,
@@ -336,12 +438,16 @@ export default function SupportTicketsPage() {
           size: a.size,
         }))
       }
-      await adminFetch(`/admin/tickets/${selectedTicketId}/messages`, { method: 'POST', body })
-      setReply('')
-      setPendingAttachments([])
+      await adminFetch(`/admin/tickets/${ticketId}/messages`, { method: 'POST', body })
+      // Clear only what was sent; text typed while sending stays in the draft.
+      updateDraft(ticketId, (current) => ({
+        text: current.text === draft.text ? '' : current.text,
+        attachments: current.attachments.filter((a) => !draft.attachments.includes(a)),
+      }))
+      if (keepOutsideListRef.current === ticketId) keepOutsideListRef.current = null
       if (config?.customer_replies.can_send) {
         toast.success('Reply sent', {
-          description: customerEmail ? `Emailed to ${customerEmail}` : undefined,
+          description: recipient ? `Emailed to ${recipient}` : undefined,
         })
       } else {
         // The server reason names module options and env variables; it is shown only in
@@ -350,9 +456,12 @@ export default function SupportTicketsPage() {
           description: 'Replies cannot be emailed yet. Ask the person who installed your shop.',
         })
       }
-      await Promise.all([fetchDetails(selectedTicketId), fetchTickets()])
+      await Promise.all([
+        selectedTicketIdRef.current === ticketId ? fetchDetails(ticketId) : undefined,
+        fetchTickets(),
+      ])
     } catch (error) {
-      console.error(`[tickets] sendReply failed for ${selectedTicketId}`, error)
+      console.error(`[tickets] sendReply failed for ${ticketId}`, error)
       toast.error('Reply not sent', { description: errorMessage(error) })
     } finally {
       setSaving(false)
@@ -361,15 +470,22 @@ export default function SupportTicketsPage() {
 
   const addNote = async () => {
     if (!selectedTicketId || !noteContent.trim()) return
+    const ticketId = selectedTicketId
+    const content = noteContent
     setAddingNote(true)
     try {
       await adminFetch(`/admin/tickets/${selectedTicketId}/notes`, {
         method: 'POST',
-        body: { content: noteContent.trim() },
+        body: { content: content.trim() },
       })
-      setNoteContent('')
+      setNoteDrafts((prev) => {
+        if (prev[ticketId] !== content) return prev
+        const copy = { ...prev }
+        delete copy[ticketId]
+        return copy
+      })
       toast.success('Note added')
-      await fetchDetails(selectedTicketId)
+      if (selectedTicketIdRef.current === ticketId) await fetchDetails(ticketId)
     } catch (error) {
       console.error(`[tickets] addNote failed for ${selectedTicketId}`, error)
       toast.error('Could not add the note', { description: errorMessage(error) })
@@ -379,7 +495,8 @@ export default function SupportTicketsPage() {
   }
 
   const uploadFiles = async (files: FileList) => {
-    if (files.length === 0) return
+    if (files.length === 0 || !selectedTicketId) return
+    const ticketId = selectedTicketId
     setUploadingFiles(true)
     try {
       const formData = new FormData()
@@ -388,7 +505,10 @@ export default function SupportTicketsPage() {
         method: 'POST',
         body: formData,
       })
-      setPendingAttachments((prev) => [...prev, ...result.attachments])
+      updateDraft(ticketId, (draft) => ({
+        ...draft,
+        attachments: [...draft.attachments, ...result.attachments],
+      }))
     } catch (error) {
       console.error('[tickets] uploadFiles failed', error)
       toast.error('File upload failed', { description: errorMessage(error) })
@@ -399,9 +519,11 @@ export default function SupportTicketsPage() {
 
   const analyzeNow = async () => {
     if (!selectedTicketId) return
+    const ticketId = selectedTicketId
     setAnalyzing(true)
     try {
-      setAnalysis(await analyzeTicketNow(selectedTicketId))
+      const result = await analyzeTicketNow(ticketId)
+      setAnalysisState({ ticketId, analysis: result })
       toast.success('Ticket analyzed')
     } catch (error) {
       toast.error('Analysis failed', { description: errorMessage(error) })
@@ -447,6 +569,15 @@ export default function SupportTicketsPage() {
     setSaving(true)
     try {
       await adminFetch(`/admin/tickets/${selectedTicketId}`, { method: 'DELETE' })
+      const deletedId = selectedTicketId
+      updateDraft(deletedId, () => EMPTY_DRAFT)
+      draftsRef.current = { ...draftsRef.current }
+      delete draftsRef.current[deletedId]
+      knownRowsRef.current.delete(deletedId)
+      if (keepOutsideListRef.current === deletedId) keepOutsideListRef.current = null
+      selectedTicketIdRef.current = null
+      setSelectedTicketId(null)
+      setTickets((prev) => prev.filter((ticket) => ticket.id !== deletedId))
       const nextCount = Math.max(0, ticketCount - 1)
       const nextOffset = Math.min(ticketOffset, getLastTicketPageOffset(nextCount))
 
@@ -454,7 +585,7 @@ export default function SupportTicketsPage() {
         setTicketOffset(nextOffset)
       }
       setDetails(null)
-      setAnalysis(null)
+      setAnalysisState(null)
       setCustomerName(null)
       setCustomerEmail(null)
       setCustomerTickets([])
@@ -511,6 +642,7 @@ export default function SupportTicketsPage() {
     const customerId = selectedTicket?.customer_id
     setCustomerMissing(false)
     if (!customerId) {
+      customerRequestRef.current = null
       setCustomerName(selectedTicket ? customerLabel(selectedTicket) : null)
       setCustomerEmail(selectedTicket?.contact_email ?? null)
       setCustomerTickets([])
@@ -522,10 +654,9 @@ export default function SupportTicketsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTicket?.id, selectedTicket?.customer_id, fetchCustomer, fetchCustomerTickets])
 
+  // Pick the first ticket only when none is open; fetchTickets decides when an open one may change.
   useEffect(() => {
-    if (!selectedTicketId || !tickets.some((ticket) => ticket.id === selectedTicketId)) {
-      setSelectedTicketId(tickets[0]?.id ?? null)
-    }
+    if (!selectedTicketId && tickets[0]) setSelectedTicketId(tickets[0].id)
   }, [selectedTicketId, tickets])
 
   const senderLabel = (senderType: string) =>
@@ -587,7 +718,7 @@ export default function SupportTicketsPage() {
               </div>
               <Input
                 size="small"
-                placeholder="Search subject, order ID or guest email"
+                placeholder="Search subject, order number or email"
                 value={search}
                 onChange={(e) => {
                   setTicketOffset(0)
@@ -652,28 +783,51 @@ export default function SupportTicketsPage() {
                   </Select.Content>
                 </Select>
               </div>
-              <div className="flex items-center gap-2">
-                <Switch
-                  id="tickets-assigned-to-me"
-                  checked={assignedToMe}
-                  disabled={!currentUserId}
-                  onCheckedChange={(checked) => {
-                    setTicketOffset(0)
-                    setAssignedToMe(checked)
-                  }}
-                />
-                <Label htmlFor="tickets-assigned-to-me" size="small">
-                  Assigned to me
-                </Label>
-              </div>
+              {/* Only useful when several admins share the inbox. */}
+              {adminUsers.length > 1 && (
+                <div className="flex items-center gap-2">
+                  <Switch
+                    id="tickets-assigned-to-me"
+                    checked={assignedToMe}
+                    disabled={!currentUserId}
+                    onCheckedChange={(checked) => {
+                      setTicketOffset(0)
+                      setAssignedToMe(checked)
+                    }}
+                  />
+                  <Label htmlFor="tickets-assigned-to-me" size="small">
+                    Assigned to me
+                  </Label>
+                </div>
+              )}
             </div>
 
             <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto">
-              {loadingTickets && tickets.length === 0 ? (
-                <div className="flex h-64 items-center justify-center">
-                  <Spinner className="text-ui-fg-interactive animate-spin" />
+              {ticketsError ? (
+                <div className="p-4">
+                  <ErrorState
+                    what="your tickets"
+                    error={ticketsError}
+                    onRetry={() => fetchTickets()}
+                    retrying={loadingTickets}
+                  >
+                    {tickets.length > 0 ? (
+                      <Text size="xsmall">
+                        The list below is from the last successful load and may be out of date.
+                      </Text>
+                    ) : null}
+                  </ErrorState>
                 </div>
-              ) : tickets.length === 0 ? (
+              ) : null}
+              {loadingTickets && tickets.length === 0 && !ticketsError ? (
+                <div
+                  className="text-ui-fg-subtle flex h-64 items-center justify-center gap-2"
+                  role="status"
+                >
+                  <Spinner className="text-ui-fg-interactive animate-spin" />
+                  <Text size="small">Loading tickets…</Text>
+                </div>
+              ) : ticketsError && tickets.length === 0 ? null : tickets.length === 0 ? (
                 <div className="text-ui-fg-subtle flex h-full flex-col items-center justify-center p-10 text-center">
                   <ChatBubbleLeftRight className="mb-4 h-10 w-10 opacity-50" />
                   <Text size="small" weight="plus">
@@ -694,12 +848,14 @@ export default function SupportTicketsPage() {
                       aria-label={`Open ticket ${ticket.subject}`}
                       aria-pressed={ticket.id === selectedTicketId}
                       onClick={() => {
+                        keepOutsideListRef.current = null
                         setSelectedTicketId(ticket.id)
                         setMobileView('detail')
                       }}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
                           e.preventDefault()
+                          keepOutsideListRef.current = null
                           setSelectedTicketId(ticket.id)
                           setMobileView('detail')
                         }
@@ -714,6 +870,11 @@ export default function SupportTicketsPage() {
                         <Text size="small" weight="plus" className="line-clamp-1 flex-1">
                           {ticket.subject}
                         </Text>
+                        {ticket.id !== selectedTicketId && draftHasContent(drafts[ticket.id]) ? (
+                          <Badge size="2xsmall" color="purple">
+                            Draft
+                          </Badge>
+                        ) : null}
                         <Badge size="2xsmall" color={statusColor(ticket.status)}>
                           {statusName(displayStatus(ticket.status))}
                         </Badge>
@@ -730,7 +891,9 @@ export default function SupportTicketsPage() {
                           {ticket.assigned_to && ticket.assigned_to === currentUserId
                             ? 'Yours · '
                             : ''}
-                          {formatTime(ticket.updated_at)}
+                          <span title={formatDateTime(ticket.updated_at)}>
+                            {formatRelative(ticket.updated_at)}
+                          </span>
                         </Text>
                       </div>
                     </div>
@@ -743,8 +906,8 @@ export default function SupportTicketsPage() {
               <div className="flex items-center justify-between gap-3">
                 <Text size="xsmall" className="text-ui-fg-subtle">
                   {ticketCount === 0
-                    ? '0 tickets'
-                    : `${ticketCount} ticket${ticketCount === 1 ? '' : 's'} · page ${currentPage} of ${totalPages}`}
+                    ? plural(0, 'ticket')
+                    : `${plural(ticketCount, 'ticket')} · page ${currentPage} of ${totalPages}`}
                 </Text>
                 <div className="flex items-center gap-2">
                   <Button
@@ -798,9 +961,7 @@ export default function SupportTicketsPage() {
                   <div className="min-w-0 flex-1">
                     <div className="text-ui-fg-subtle mb-1 flex items-center gap-1.5">
                       <Clock className="h-3.5 w-3.5" />
-                      <Text size="xsmall">
-                        Opened {new Date(selectedTicket.created_at).toLocaleString()}
-                      </Text>
+                      <Text size="xsmall">Opened {formatDateTime(selectedTicket.created_at)}</Text>
                     </div>
                     <Heading level="h1" className="line-clamp-1 text-xl font-bold lg:text-2xl">
                       {selectedTicket.subject}
@@ -814,7 +975,7 @@ export default function SupportTicketsPage() {
                         rel="noreferrer"
                       >
                         <Badge color="orange" className="hidden h-8 gap-1.5 px-3 sm:inline-flex">
-                          Order #{selectedTicket.order_id.slice(-8)}
+                          {orderLabel(selectedTicket)}
                         </Badge>
                       </a>
                     )}
@@ -838,6 +999,19 @@ export default function SupportTicketsPage() {
                     </Button>
                   </div>
                 </div>
+
+                {selectedOutsideList && (
+                  <div
+                    role="status"
+                    className="bg-ui-tag-orange-bg border-ui-tag-orange-border text-ui-fg-base border-b px-4 py-2 lg:px-8"
+                  >
+                    <Text size="small">
+                      {draftHasContent(selectedTicketId ? drafts[selectedTicketId] : undefined)
+                        ? 'This ticket moved out of the current filter. It stays open here so your reply is kept.'
+                        : 'This ticket is not in the current filter or page of the list.'}
+                    </Text>
+                  </div>
+                )}
 
                 {/* Tabs & content */}
                 <div className="flex min-h-0 flex-1 flex-col">
@@ -967,7 +1141,9 @@ export default function SupportTicketsPage() {
                             <Textarea
                               placeholder="Add a note for other admins…"
                               value={noteContent}
-                              onChange={(e) => setNoteContent(e.target.value)}
+                              onChange={(e) =>
+                                selectedTicketId && setNoteFor(selectedTicketId, e.target.value)
+                              }
                               aria-label="New internal note"
                             />
                             <Button
@@ -1020,12 +1196,16 @@ export default function SupportTicketsPage() {
                           setActiveTab('conversation')
                         }}
                         onSuggestionGenerated={(suggested, confidence) => {
-                          setAnalysis((prev) =>
-                            prev
+                          const ticketId = selectedTicketId
+                          setAnalysisState((prev) =>
+                            prev && prev.ticketId === ticketId && prev.analysis
                               ? {
-                                  ...prev,
-                                  suggested_response: suggested,
-                                  response_confidence: confidence,
+                                  ticketId,
+                                  analysis: {
+                                    ...prev.analysis,
+                                    suggested_response: suggested,
+                                    response_confidence: confidence,
+                                  },
                                 }
                               : prev,
                           )
@@ -1105,7 +1285,12 @@ export default function SupportTicketsPage() {
                                 type="file"
                                 multiple
                                 className="hidden"
-                                onChange={(e) => e.target.files && uploadFiles(e.target.files)}
+                                onChange={(e) => {
+                                  const input = e.currentTarget
+                                  if (input.files) void uploadFiles(input.files)
+                                  // Lets the same file be picked again after removing it.
+                                  input.value = ''
+                                }}
                               />
                             </div>
                           </div>
@@ -1123,7 +1308,13 @@ export default function SupportTicketsPage() {
                                     type="button"
                                     aria-label={`Remove attachment ${a.filename}`}
                                     onClick={() =>
-                                      setPendingAttachments((p) => p.filter((_, idx) => idx !== i))
+                                      selectedTicketId &&
+                                      updateDraft(selectedTicketId, (draft) => ({
+                                        ...draft,
+                                        attachments: draft.attachments.filter(
+                                          (_, idx) => idx !== i,
+                                        ),
+                                      }))
                                     }
                                     className="hover:text-ui-fg-base text-ui-fg-subtle"
                                   >
@@ -1145,18 +1336,41 @@ export default function SupportTicketsPage() {
                               </Text>
                               {!config?.customer_replies.can_send &&
                               config?.customer_replies.reason ? (
-                                <InstallerNote>{config.customer_replies.reason}</InstallerNote>
+                                <InstallerHint className="mt-2">
+                                  <Text size="xsmall" className="break-words whitespace-pre-wrap">
+                                    {config.customer_replies.reason}
+                                  </Text>
+                                </InstallerHint>
                               ) : null}
                             </div>
-                            <Button
-                              onClick={sendReply}
-                              disabled={
-                                (!reply.trim() && pendingAttachments.length === 0) || saving
-                              }
-                              isLoading={saving}
-                            >
-                              Send reply
-                            </Button>
+                            <div className="flex min-w-0 items-center gap-3">
+                              {/* Who receives this reply, so it cannot go to the wrong customer. */}
+                              <Text
+                                size="small"
+                                className="text-ui-fg-subtle min-w-0 truncate"
+                                title={customerEmail ?? undefined}
+                              >
+                                To:{' '}
+                                <span className="text-ui-fg-base">
+                                  {customerEmail
+                                    ? customerName && customerName !== customerEmail
+                                      ? `${customerName} <${customerEmail}>`
+                                      : customerEmail
+                                    : (customerName ?? 'Loading…')}
+                                </span>
+                              </Text>
+                              <Button
+                                onClick={sendReply}
+                                disabled={
+                                  (!reply.trim() && pendingAttachments.length === 0) ||
+                                  saving ||
+                                  (!customerEmail && !customerName)
+                                }
+                                isLoading={saving}
+                              >
+                                Send reply
+                              </Button>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -1182,6 +1396,7 @@ export default function SupportTicketsPage() {
                 <ContextPanel
                   {...contextPanelProps}
                   onSelectTicket={(id) => {
+                    keepOutsideListRef.current = id
                     setSelectedTicketId(id)
                     setMobileView('detail')
                   }}
@@ -1215,6 +1430,7 @@ export default function SupportTicketsPage() {
                           setShowContext(false)
                         }}
                         onSelectTicket={(id) => {
+                          keepOutsideListRef.current = id
                           setSelectedTicketId(id)
                           setMobileView('detail')
                         }}
@@ -1272,8 +1488,7 @@ export default function SupportTicketsPage() {
                         {ticket.subject}
                       </Text>
                       <Text size="xsmall" className="text-ui-fg-subtle">
-                        {statusName(ticket.status)} · opened{' '}
-                        {new Date(ticket.created_at).toLocaleDateString()}
+                        {statusName(ticket.status)} · opened {formatDay(ticket.created_at)}
                       </Text>
                     </div>
                   </label>
@@ -1312,16 +1527,6 @@ export default function SupportTicketsPage() {
       />
     </Container>
   )
-}
-
-function formatTime(dateString: string) {
-  const date = new Date(dateString)
-  const now = new Date()
-  const diff = Math.floor((now.getTime() - date.getTime()) / 60000)
-  if (diff < 1) return 'Just now'
-  if (diff < 60) return `${diff}m ago`
-  if (diff < 1440) return `${Math.floor(diff / 60)}h ago`
-  return date.toLocaleDateString()
 }
 
 export const config = defineRouteConfig({

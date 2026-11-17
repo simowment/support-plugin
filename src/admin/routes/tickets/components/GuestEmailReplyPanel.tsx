@@ -1,7 +1,7 @@
 import { Badge, Button, Container, Heading, Text, Textarea, toast } from '@medusajs/ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { adminFetch } from '../../../lib/api'
-import { InstallerNote } from '../../../components/installer-note'
+import { InstallerHint } from '../../../components/ui/installer-hint'
 
 type Draft = {
   id: string
@@ -138,7 +138,11 @@ export function GuestEmailReplyPanel({
             Email replies to guests are not set up. Ask the person who installed your shop.
           </Text>
           {/* The server reason names module options and env variables. */}
-          <InstallerNote>{cannotSendReason}</InstallerNote>
+          <InstallerHint className="mt-2">
+            <Text size="xsmall" className="break-words whitespace-pre-wrap">
+              {cannotSendReason}
+            </Text>
+          </InstallerHint>
         </div>
       )}
       <Textarea

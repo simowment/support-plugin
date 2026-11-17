@@ -79,6 +79,11 @@ type ListAdminTicketsInput = {
   assigned_to?: string
   q?: string
   tab?: 'active' | 'closed'
+  /**
+   * Orders whose number (`display_id`) matches the search, resolved by the API route
+   * ("#32" or "32"). Tickets linked to these orders match the search too.
+   */
+  order_ids?: string[]
 }
 
 export type InboundEmailAttachment = {
@@ -1157,39 +1162,74 @@ export default class SupportTicketModuleService extends MedusaService({
     })
   }
 
+  /**
+   * The admin inbox list. Default order puts the tickets that need the shop first:
+   * "Waiting for us", then "Open", then everything else, each group by last activity
+   * (`updated_at`, newest first). A raw query because the ORM order option cannot sort
+   * by a CASE expression; the filters mirror the earlier `listAndCountTickets` call.
+   */
   async listAdminTickets(input: ListAdminTicketsInput, pagination?: PaginationParams) {
-    const filters: Record<string, unknown> = {}
+    const where: string[] = ['"deleted_at" is null']
+    const bindings: unknown[] = []
 
     if (input.status) {
-      filters.status = input.status
+      where.push('"status" = ?')
+      bindings.push(input.status)
     } else if (input.tab === 'closed') {
-      filters.status = TicketStatus.CLOSED
+      where.push('"status" = ?')
+      bindings.push(TicketStatus.CLOSED)
     } else if (input.tab === 'active') {
-      filters.status = { $ne: TicketStatus.CLOSED }
+      where.push('"status" <> ?')
+      bindings.push(TicketStatus.CLOSED)
     }
 
-    if (input.category) filters.category = input.category
-    if (input.customer_id) filters.customer_id = input.customer_id
-    if (input.assigned_to) filters.assigned_to = input.assigned_to
+    const equals: Array<[string, string | undefined]> = [
+      ['category', input.category],
+      ['customer_id', input.customer_id],
+      ['assigned_to', input.assigned_to],
+    ]
+    for (const [column, value] of equals) {
+      if (!value) continue
+      where.push(`"${column}" = ?`)
+      bindings.push(value)
+    }
 
     const search = input.q?.trim()
     if (search) {
       const likeSearch = `%${search.replace(/[%_\\]/g, '\\$&')}%`
-      filters.$or = [
-        { id: { $ilike: likeSearch } },
-        { subject: { $ilike: likeSearch } },
-        { customer_id: { $ilike: likeSearch } },
-        { contact_email: { $ilike: likeSearch } },
-        { contact_name: { $ilike: likeSearch } },
-        { order_id: { $ilike: likeSearch } },
-      ]
+      const columns = ['id', 'subject', 'customer_id', 'contact_email', 'contact_name', 'order_id']
+      const matches = columns.map((column) => `"${column}" ilike ?`)
+      bindings.push(...columns.map(() => likeSearch))
+      const orderIds = (input.order_ids ?? []).filter(Boolean)
+      if (orderIds.length) {
+        matches.push(`"order_id" in (${orderIds.map(() => '?').join(', ')})`)
+        bindings.push(...orderIds)
+      }
+      where.push(`(${matches.join(' or ')})`)
     }
 
-    const [tickets, count] = await this.listAndCountTickets(filters, {
-      order: { created_at: 'DESC' },
-      take: pagination?.take ?? 50,
-      skip: pagination?.skip ?? 0,
-    })
+    const take = pagination?.take ?? 50
+    const skip = pagination?.skip ?? 0
+    const whereSql = where.join(' and ')
+    const connection = this.getPgConnection()
+
+    const [countResult, pageResult] = await Promise.all([
+      connection.raw(`select count(*)::int as "count" from "ticket" where ${whereSql}`, bindings),
+      connection.raw(
+        `select "id" from "ticket" where ${whereSql}
+         order by case "status" when ? then 0 when ? then 1 else 2 end, "updated_at" desc, "id" desc
+         limit ? offset ?`,
+        [...bindings, TicketStatus.WAITING_ADMIN, TicketStatus.OPEN, take, skip],
+      ),
+    ])
+
+    const count = Number(countResult.rows?.[0]?.count ?? 0)
+    const ids = (pageResult.rows ?? []).map((row) => String(row.id))
+    if (!ids.length) return { tickets: [], count }
+
+    const rows = await this.listTickets({ id: ids }, { take: ids.length })
+    const byId = new Map(rows.map((ticket) => [ticket.id, ticket]))
+    const tickets = ids.map((id) => byId.get(id)).filter((ticket) => ticket !== undefined)
 
     return { tickets, count }
   }

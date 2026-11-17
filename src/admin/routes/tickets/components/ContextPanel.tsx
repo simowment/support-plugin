@@ -1,6 +1,7 @@
 import { Badge, Button, Select, Text } from '@medusajs/ui'
 import type { AIAnalysis } from '../lib/ai'
 import { IntelligencePanel } from './IntelligencePanel'
+import { formatDate } from '../../../components/ui/format'
 import {
   STATUS_OPTIONS,
   customerLabel,
@@ -186,7 +187,7 @@ export const ContextPanel = ({
                       {statusName(t.status)}
                     </Badge>
                     <Text size="xsmall" className="text-ui-fg-subtle">
-                      {new Date(t.created_at).toLocaleDateString()}
+                      {formatDate(t.created_at)}
                     </Text>
                   </div>
                 </button>

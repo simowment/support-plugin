@@ -1,3 +1,4 @@
+import { formatDateTime } from '../../../components/ui/format'
 export type Ticket = {
   id: string
   subject: string
@@ -21,6 +22,8 @@ export type Ticket = {
   } | null
   /** True when the ticket points at a customer account that no longer exists. */
   customer_deleted?: boolean
+  /** Present on list rows: the linked order's number ("#32"), or null when unknown. */
+  order_display_id?: number | null
 }
 
 /** GET /admin/tickets/config */
@@ -199,10 +202,8 @@ export const CANNED_RESPONSES = [
 export const TICKETS_POLL_MS = 15_000
 export const DETAILS_POLL_MS = 5_000
 
-export const formatDate = (value?: string | null) => {
-  if (!value) return 'N/A'
-  return new Date(value).toLocaleString()
-}
+/** S4. "Tue 18 Nov, 14:05" in the admin language (kit formatter). */
+export const formatDate = (value?: string | null) => formatDateTime(value)
 
 export const isClosedStatus = (status: string) => status === 'closed' || status === 'resolved'
 export const displayStatus = (status: string) => (status === 'resolved' ? 'closed' : status)
