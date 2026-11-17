@@ -263,13 +263,13 @@ export function formatList(items: readonly string[]): string {
 // S10. Wording. The rule: keep a precise technical term unless a more common word is
 // exactly as precise; add a short gloss on first use instead of a vaguer word. Hide only
 // implementation detail (commands, env names, file paths, exit codes, ids) behind
-// "For your installer".
+// "Technical details".
 // ---------------------------------------------------------------------------
 
 /**
  * `replace`: the term is vague or internal; use the replacement, which says the same or more.
  * `gloss`: keep the term, add the gloss on its first use on a page.
- * `installer`: implementation detail; move it under "For your installer".
+ * `installer`: implementation detail; move it under "Technical details".
  */
 export type GlossaryKind = 'replace' | 'gloss' | 'installer'
 

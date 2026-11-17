@@ -107,7 +107,7 @@ function summaryLine(items: StripItem[], worst: StatusKind): string {
  * shop can do with them (email intake, emailed replies, AI). Collapsed to one status line
  * when everything works; open when something needs a look, unless the owner chose
  * otherwise. Setup itself happens in the backend configuration; technical notes and the
- * host's `setup_help` hint sit in a closed "For your installer" disclosure.
+ * host's `setup_help` hint sit in a closed "Technical details" disclosure.
  */
 export function SupportHelpStrip({ config }: { config: TicketsConfig | null }) {
   const [hiddenChoice, setHiddenChoice] = useState(readHidden)
