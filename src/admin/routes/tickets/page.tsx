@@ -29,6 +29,7 @@ import {
 } from '@medusajs/ui'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { adminFetch } from '../../lib/api'
+import { InstallerNote } from '../../components/installer-note'
 import { analyzeTicketNow, type AIAnalysis } from './lib/ai'
 import { formatLabel } from './lib/format'
 import { AiAssistantTab } from './components/AiAssistantTab'
@@ -343,8 +344,10 @@ export default function SupportTicketsPage() {
           description: customerEmail ? `Emailed to ${customerEmail}` : undefined,
         })
       } else {
+        // The server reason names module options and env variables; it is shown only in
+        // the installer disclosure under the composer.
         toast.warning('Reply saved on the ticket, but not emailed', {
-          description: config?.customer_replies.reason ?? undefined,
+          description: 'Replies cannot be emailed yet. Ask the person who installed your shop.',
         })
       }
       await Promise.all([fetchDetails(selectedTicketId), fetchTickets()])
@@ -570,7 +573,7 @@ export default function SupportTicketsPage() {
               <div className="flex items-center justify-between">
                 <Heading level="h1" className="flex items-center gap-2 text-xl font-bold">
                   <ChatBubbleLeftRight className="text-ui-fg-interactive" />
-                  Support tickets
+                  Support inbox
                 </Heading>
                 <Button
                   variant="secondary"
@@ -1132,12 +1135,19 @@ export default function SupportTicketsPage() {
                           )}
 
                           <div className="border-ui-border-base flex flex-wrap items-center justify-between gap-3 border-t pt-4">
-                            <Text size="xsmall" className="text-ui-fg-subtle max-w-md">
-                              {config?.customer_replies.can_send
-                                ? `The reply is emailed to ${customerEmail ?? 'the customer'} and the status becomes Waiting for customer.`
-                                : (config?.customer_replies.reason ??
-                                  'The reply is saved on the ticket.')}
-                            </Text>
+                            <div className="max-w-md">
+                              <Text size="xsmall" className="text-ui-fg-subtle">
+                                {config?.customer_replies.can_send
+                                  ? `The reply is emailed to ${customerEmail ?? 'the customer'} and the status becomes Waiting for customer.`
+                                  : config?.customer_replies.reason
+                                    ? 'The reply is saved on the ticket but cannot be emailed yet. Ask the person who installed your shop.'
+                                    : 'The reply is saved on the ticket.'}
+                              </Text>
+                              {!config?.customer_replies.can_send &&
+                              config?.customer_replies.reason ? (
+                                <InstallerNote>{config.customer_replies.reason}</InstallerNote>
+                              ) : null}
+                            </div>
                             <Button
                               onClick={sendReply}
                               disabled={
@@ -1315,6 +1325,7 @@ function formatTime(dateString: string) {
 }
 
 export const config = defineRouteConfig({
-  label: 'Support tickets',
+  label: 'Support inbox',
   icon: ChatBubbleLeftRight,
+  rank: 10,
 })

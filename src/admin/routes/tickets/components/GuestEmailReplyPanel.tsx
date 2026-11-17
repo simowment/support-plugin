@@ -1,6 +1,7 @@
 import { Badge, Button, Container, Heading, Text, Textarea, toast } from '@medusajs/ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { adminFetch } from '../../../lib/api'
+import { InstallerNote } from '../../../components/installer-note'
 
 type Draft = {
   id: string
@@ -133,7 +134,11 @@ export function GuestEmailReplyPanel({
           <Text size="small" weight="plus">
             The guest cannot be answered yet.
           </Text>
-          <Text size="small">{cannotSendReason}</Text>
+          <Text size="small">
+            Email replies to guests are not set up. Ask the person who installed your shop.
+          </Text>
+          {/* The server reason names module options and env variables. */}
+          <InstallerNote>{cannotSendReason}</InstallerNote>
         </div>
       )}
       <Textarea
@@ -202,7 +207,7 @@ export function GuestEmailReplyPanel({
                       size="small"
                       onClick={() => void send(draft)}
                       disabled={busy || !canSend}
-                      title={!canSend ? (cannotSendReason ?? undefined) : undefined}
+                      title={!canSend ? 'Email replies to guests are not set up yet.' : undefined}
                     >
                       Send email
                     </Button>

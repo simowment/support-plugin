@@ -1,6 +1,7 @@
 import { Badge, Text } from '@medusajs/ui'
 import { useState } from 'react'
 import type { TicketsConfig } from '../lib/ticket-page'
+import { InstallerNote } from '../../../components/installer-note'
 
 const STORAGE_KEY = 'support-tickets:help-strip-hidden'
 
@@ -52,7 +53,8 @@ function Item({
 /**
  * One-glance explanation of the support inbox: where tickets come from and what this
  * shop can do with them (email intake, emailed replies, AI). Setup itself happens in the
- * backend configuration; the host's `setup_help` hint is shown when it sends one.
+ * backend configuration; technical notes and the host's `setup_help` hint sit in a
+ * closed "For your installer" disclosure.
  */
 export function SupportHelpStrip({ config }: { config: TicketsConfig | null }) {
   const [hidden, setHidden] = useState(readHidden)
@@ -80,18 +82,30 @@ export function SupportHelpStrip({ config }: { config: TicketsConfig | null }) {
         <div className="flex flex-col gap-y-1">
           <Text size="small" className="text-ui-fg-subtle">
             Customer questions from the storefront contact form and the support mailbox. Reply here;
-            customers get your answer by email. Email sending comes from the email queue (SMTP or
-            Mailgun); email intake and guest replies come from this plugin's inbound options
-            (inbound recipients, reply domain, Mailgun inbound webhook). Both are set in the backend
-            configuration.
+            customers get your answer by email. If something below is off, ask the person who
+            installed your shop.
           </Text>
-          {config?.setup_help && (config.setup_help.text || config.setup_help.url) && (
-            <Text size="xsmall" className="text-ui-fg-muted">
-              {config.setup_help.text && (
+          <InstallerNote>
+            Email sending comes from the email queue (SMTP or Mailgun); email intake and guest replies
+            come from this plugin's inbound options (inbound recipients, reply domain, Mailgun inbound
+            webhook). Both are set in the backend configuration.
+            {config &&
+              !config.customer_replies.can_send &&
+              config.customer_replies.reason &&
+              ` Replies to customers: ${config.customer_replies.reason}`}
+            {config &&
+              !config.guest_replies.can_send &&
+              config.guest_replies.reason &&
+              ` Email-only guests: ${config.guest_replies.reason}`}
+            {config?.setup_help?.text && (
+              <>
+                {' '}
                 <span className="whitespace-pre-wrap break-words">{config.setup_help.text}</span>
-              )}
-              {config.setup_help.text && config.setup_help.url && ' '}
-              {config.setup_help.url && (
+              </>
+            )}
+            {config?.setup_help?.url && (
+              <>
+                {' '}
                 <a
                   href={config.setup_help.url}
                   target="_blank"
@@ -100,9 +114,9 @@ export function SupportHelpStrip({ config }: { config: TicketsConfig | null }) {
                 >
                   {config.setup_help.text ? 'More help' : 'Setup help'}
                 </a>
-              )}
-            </Text>
-          )}
+              </>
+            )}
+          </InstallerNote>
         </div>
         <button
           type="button"
@@ -135,7 +149,7 @@ export function SupportHelpStrip({ config }: { config: TicketsConfig | null }) {
               ? config.customer_replies.reply_to === 'ticket'
                 ? 'Your reply is emailed; the customer can answer by email and it lands on the ticket.'
                 : 'Your reply is emailed; customer answers go to the support mailbox.'
-              : (config.customer_replies.reason ?? 'Replies are only saved on the ticket.')}
+              : 'Replies are only saved on the ticket; they are not emailed yet.'}
           </Item>
           <Item
             title="Email-only guests"
@@ -144,7 +158,7 @@ export function SupportHelpStrip({ config }: { config: TicketsConfig | null }) {
           >
             {config.guest_replies.can_send
               ? 'People who wrote by email get a reviewed email reply (Save draft, then Send email).'
-              : (config.guest_replies.reason ?? 'Email replies to guests are not available.')}
+              : 'People who wrote by email cannot get an email reply yet. Drafts can still be saved.'}
           </Item>
           <Item
             title="AI suggestions"
