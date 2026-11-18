@@ -1,9 +1,19 @@
-import { Badge, Button, Container, Heading, Text, Textarea, toast } from '@medusajs/ui'
+import { Badge, Button, Text, Textarea, toast } from '@medusajs/ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { adminFetch } from '../../../lib/api'
 import { InstallerHint } from '../../../components/ui/installer-hint'
 
-type Draft = {
+/**
+ * Email replies to a guest ticket (someone who wrote to the support address without an
+ * account). The email is the only way to answer them: write a draft, check it, then send it;
+ * their answer comes back on this ticket.
+ *
+ * Split in three so the ticket page reads like a chat: useGuestEmailDrafts (state and calls),
+ * GuestEmailBubble (one draft or sent email, shown in the thread at its time) and
+ * GuestEmailComposer (docked under the thread).
+ */
+
+export type GuestDraft = {
   id: string
   body: string
   revision: number
@@ -12,6 +22,8 @@ type Draft = {
   subject: string
   email_queue_id: string | null
   delivery_status?: string
+  created_at?: string | null
+  updated_at?: string | null
 }
 
 const STATUS_TEXT: Record<
@@ -33,25 +45,12 @@ const STATUS_TEXT: Record<
   cancelled: { label: 'Not sent (cancelled or blocked address)', color: 'red' },
 }
 
-const statusOf = (draft: Draft) => draft.delivery_status ?? draft.status
+const statusOf = (draft: GuestDraft) => draft.delivery_status ?? draft.status
 
-/**
- * Email reply to a guest ticket (someone who wrote to the support address without an
- * account). Write a draft, check it, then send it; the customer's answer comes back on
- * this ticket.
- */
-export function GuestEmailReplyPanel({
-  ticketId,
-  recipient,
-  canSend,
-  cannotSendReason,
-}: {
-  ticketId: string
-  recipient: string
-  canSend: boolean
-  cannotSendReason: string | null
-}) {
-  const [drafts, setDrafts] = useState<Draft[]>([])
+export type GuestEmail = ReturnType<typeof useGuestEmailDrafts>
+
+export function useGuestEmailDrafts(ticketId: string | null) {
+  const [drafts, setDrafts] = useState<GuestDraft[]>([])
   const [body, setBody] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingRevision, setEditingRevision] = useState<number | null>(null)
@@ -59,30 +58,42 @@ export function GuestEmailReplyPanel({
   const clientId = useRef<string | null>(null)
 
   const refresh = useCallback(async () => {
-    const result = await adminFetch<{ drafts: Draft[] }>(`/admin/tickets/${ticketId}/email-drafts`)
+    if (!ticketId) return
+    const result = await adminFetch<{ drafts: GuestDraft[] }>(
+      `/admin/tickets/${ticketId}/email-drafts`,
+    )
     setDrafts(result.drafts)
   }, [ticketId])
 
   useEffect(() => {
+    setDrafts([])
+    setBody('')
+    setEditingId(null)
+    setEditingRevision(null)
+    clientId.current = null
+    if (!ticketId) return
     void refresh().catch(() => setDrafts([]))
     const timer = window.setInterval(() => void refresh().catch(() => undefined), 8000)
     return () => window.clearInterval(timer)
-  }, [refresh])
+  }, [ticketId, refresh])
 
   const save = async () => {
-    if (!body.trim()) return
+    if (!ticketId || !body.trim()) return
     setBusy(true)
     try {
       clientId.current ??= `ted_${crypto.randomUUID().replace(/-/g, '')}`
-      const result = await adminFetch<{ draft: Draft }>(`/admin/tickets/${ticketId}/email-drafts`, {
-        method: 'POST',
-        body: {
-          body,
-          ...(editingId
-            ? { draft_id: editingId, expected_revision: editingRevision }
-            : { client_id: clientId.current }),
+      const result = await adminFetch<{ draft: GuestDraft }>(
+        `/admin/tickets/${ticketId}/email-drafts`,
+        {
+          method: 'POST',
+          body: {
+            body,
+            ...(editingId
+              ? { draft_id: editingId, expected_revision: editingRevision }
+              : { client_id: clientId.current }),
+          },
         },
-      })
+      )
       clientId.current = null
       setEditingId(null)
       setEditingRevision(null)
@@ -100,7 +111,7 @@ export function GuestEmailReplyPanel({
     }
   }
 
-  const send = async (draft: Draft) => {
+  const send = async (draft: GuestDraft) => {
     setBusy(true)
     try {
       await adminFetch(`/admin/tickets/email-drafts/${draft.id}/send`, {
@@ -119,26 +130,116 @@ export function GuestEmailReplyPanel({
     }
   }
 
+  const edit = (draft: GuestDraft) => {
+    setEditingId(draft.id)
+    setEditingRevision(draft.revision)
+    setBody(draft.body)
+  }
+
+  const stopEditing = () => {
+    setEditingId(null)
+    setEditingRevision(null)
+    setBody('')
+  }
+
+  return { drafts, body, setBody, editingId, busy, save, send, edit, stopEditing }
+}
+
+/** One guest email (draft or sent) as an outgoing bubble in the thread. */
+export function GuestEmailBubble({
+  draft,
+  email,
+  canSend,
+}: {
+  draft: GuestDraft
+  email: GuestEmail
+  canSend: boolean
+}) {
+  const status = statusOf(draft)
+  const label = STATUS_TEXT[status] ?? { label: status, color: 'grey' as const }
+  const isDraft = status === 'draft'
+  const editing = email.editingId === draft.id
   return (
-    <Container className="mt-8 space-y-4">
-      <div>
-        <Heading level="h3">Email reply to {recipient}</Heading>
-        <Text size="small" className="text-ui-fg-subtle">
-          This guest has no account (they used the contact form or wrote to the support mailbox), so
-          this email is the only way to answer them. Save a draft, read it again, then send it.
-          Their answer comes back on this ticket.
+    <div
+      className={`max-w-[80%] rounded-2xl rounded-tr-sm border px-4 py-3 ${
+        isDraft
+          ? 'border-ui-border-strong bg-ui-bg-subtle border-dashed'
+          : 'bg-ui-bg-component border-ui-border-base'
+      }`}
+    >
+      <div className="mb-1.5 flex items-center justify-between gap-3">
+        <Text size="xsmall" className="text-ui-fg-subtle min-w-0 truncate" title={draft.recipient_email}>
+          Email to {draft.recipient_email}
         </Text>
+        <Badge size="2xsmall" color={label.color} className="flex-shrink-0">
+          {editing ? 'Editing below' : label.label}
+        </Badge>
       </div>
-      {!canSend && cannotSendReason && (
-        <div className="bg-ui-tag-orange-bg border-ui-tag-orange-border rounded-lg border p-3">
-          <Text size="small" weight="plus">
-            The guest cannot be answered yet.
+      <Text size="small" className="leading-relaxed whitespace-pre-wrap">
+        {draft.body}
+      </Text>
+      {isDraft && !editing && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Button
+            size="small"
+            variant="secondary"
+            onClick={() => email.edit(draft)}
+            disabled={email.busy}
+          >
+            Edit
+          </Button>
+          <Button
+            size="small"
+            onClick={() => void email.send(draft)}
+            disabled={email.busy || !canSend}
+            title={!canSend ? 'Email replies to guests are not set up yet.' : undefined}
+          >
+            Send email
+          </Button>
+        </div>
+      )}
+      {(status === 'sending' || status === 'unknown') && (
+        <div className="mt-3 space-y-2">
+          <Text size="xsmall" className="text-ui-fg-subtle">
+            We could not confirm whether this email went out. Checking looks at the same send and
+            never sends a second copy.
           </Text>
-          <Text size="small">
-            Email replies to guests are not set up. Ask the person who installed your shop.
+          <Button
+            size="small"
+            variant="secondary"
+            onClick={() => void email.send(draft)}
+            disabled={email.busy}
+          >
+            Check delivery
+          </Button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** The docked composer for a guest ticket: writes a draft, which is sent from its bubble. */
+export function GuestEmailComposer({
+  recipient,
+  email,
+  canSend,
+  cannotSendReason,
+}: {
+  recipient: string
+  email: GuestEmail
+  canSend: boolean
+  cannotSendReason: string | null
+}) {
+  return (
+    <div className="space-y-2">
+      {!canSend && cannotSendReason && (
+        <div className="bg-ui-tag-orange-bg border-ui-tag-orange-border rounded-lg border px-3 py-2">
+          <Text size="small" weight="plus">
+            Email replies to guests are not set up, so this guest cannot be answered yet. Ask the
+            person who installed your shop.
           </Text>
           {/* The server reason names module options and env variables. */}
-          <InstallerHint className="mt-2">
+          <InstallerHint className="mt-1">
             <Text size="xsmall" className="break-words whitespace-pre-wrap">
               {cannotSendReason}
             </Text>
@@ -146,98 +247,39 @@ export function GuestEmailReplyPanel({
         </div>
       )}
       <Textarea
-        rows={5}
-        value={body}
-        onChange={(event) => setBody(event.target.value)}
-        placeholder="Write your email reply…"
+        rows={3}
+        value={email.body}
+        onChange={(event) => email.setBody(event.target.value)}
+        placeholder={`Write an email to ${recipient}…`}
         aria-label="Email reply"
+        className="max-h-[40vh] min-h-[76px] resize-y"
       />
-      <div className="flex gap-2">
-        <Button
-          variant="secondary"
-          onClick={() => void save()}
-          disabled={!body.trim() || busy}
-          isLoading={busy}
-        >
-          {editingId ? 'Save changes' : 'Save draft'}
-        </Button>
-        {editingId && (
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Text size="xsmall" className="text-ui-fg-subtle min-w-0 flex-1">
+          No account: you answer by email. Save a draft, then send it from the conversation.
+        </Text>
+        <div className="flex items-center gap-2">
+          {email.editingId && (
+            <Button
+              size="small"
+              variant="transparent"
+              onClick={email.stopEditing}
+              disabled={email.busy}
+            >
+              Stop editing
+            </Button>
+          )}
           <Button
-            variant="transparent"
-            onClick={() => {
-              setEditingId(null)
-              setEditingRevision(null)
-              setBody('')
-            }}
-            disabled={busy}
+            size="small"
+            variant="secondary"
+            onClick={() => void email.save()}
+            disabled={!email.body.trim() || email.busy}
+            isLoading={email.busy}
           >
-            Stop editing
+            {email.editingId ? 'Save changes' : 'Save draft'}
           </Button>
-        )}
-      </div>
-      {drafts.length > 0 && (
-        <div className="space-y-3">
-          {drafts.map((draft) => {
-            const status = statusOf(draft)
-            const label = STATUS_TEXT[status] ?? { label: status, color: 'grey' as const }
-            return (
-              <div key={draft.id} className="rounded-lg border p-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <Text size="small" weight="plus">
-                    {draft.subject}
-                  </Text>
-                  <Badge size="2xsmall" color={label.color}>
-                    {label.label}
-                  </Badge>
-                </div>
-                <Text size="small" className="mt-2 whitespace-pre-wrap">
-                  {draft.body}
-                </Text>
-                {status === 'draft' && (
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <Button
-                      size="small"
-                      variant="secondary"
-                      onClick={() => {
-                        setEditingId(draft.id)
-                        setEditingRevision(draft.revision)
-                        setBody(draft.body)
-                      }}
-                      disabled={busy}
-                    >
-                      Edit
-                    </Button>
-                    <Button
-                      size="small"
-                      onClick={() => void send(draft)}
-                      disabled={busy || !canSend}
-                      title={!canSend ? 'Email replies to guests are not set up yet.' : undefined}
-                    >
-                      Send email
-                    </Button>
-                  </div>
-                )}
-                {(status === 'sending' || status === 'unknown') && (
-                  <div className="mt-3 space-y-2">
-                    <Text size="small" className="text-ui-fg-subtle">
-                      We could not confirm whether this email went out. Checking looks at the same
-                      send and never sends a second copy.
-                    </Text>
-                    <Button
-                      size="small"
-                      variant="secondary"
-                      onClick={() => void send(draft)}
-                      disabled={busy}
-                    >
-                      Check delivery
-                    </Button>
-                  </div>
-                )}
-              </div>
-            )
-          })}
         </div>
-      )}
-    </Container>
+      </div>
+    </div>
   )
 }

@@ -33,6 +33,7 @@ import { InstallerHint } from '../../components/ui/installer-hint'
 import { ErrorState, errorMessage } from '../../components/ui/error-state'
 import { useUnsavedGuard } from '../../components/ui/use-unsaved-guard'
 import {
+  adminLocale,
   formatDate as formatDay,
   formatDateTime,
   formatRelative,
@@ -43,7 +44,12 @@ import { formatLabel } from './lib/format'
 import { AiAssistantTab } from './components/AiAssistantTab'
 import { AiSettingsDrawer } from './components/AiSettingsDrawer'
 import { ContextPanel } from './components/ContextPanel'
-import { GuestEmailReplyPanel } from './components/GuestEmailReplyPanel'
+import {
+  GuestEmailBubble,
+  GuestEmailComposer,
+  useGuestEmailDrafts,
+  type GuestDraft,
+} from './components/GuestEmailReplyPanel'
 import { SupportHelpStrip } from './components/SupportHelpStrip'
 import {
   ACTIVE_STATUS_OPTIONS,
@@ -61,7 +67,14 @@ import {
   describeTicketEvent,
   userLabel,
 } from './lib/ticket-page'
-import type { AdminUser, Attachment, Ticket, TicketDetails, TicketsConfig } from './lib/ticket-page'
+import type {
+  AdminUser,
+  Attachment,
+  Ticket,
+  TicketDetails,
+  TicketMessage,
+  TicketsConfig,
+} from './lib/ticket-page'
 
 export type { Ticket }
 
@@ -84,6 +97,25 @@ const EMPTY_DRAFT: ReplyDraft = { text: '', attachments: [] }
 
 const draftHasContent = (draft: ReplyDraft | undefined) =>
   Boolean(draft && (draft.text.trim() || draft.attachments.length > 0))
+
+/** One entry of the conversation: a ticket message, or an email to a guest (draft or sent). */
+type ThreadItem =
+  | { kind: 'message'; at: string; message: TicketMessage }
+  | { kind: 'email'; at: string; draft: GuestDraft }
+
+/** The calendar day of a time in this browser, for the day separators in the thread. */
+const dayKey = (value: string) => {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '' : date.toDateString()
+}
+
+/** "07:16 PM" style time of day, in the admin's language. */
+const formatTime = (value: string) => {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime())
+    ? ''
+    : date.toLocaleTimeString(adminLocale(), { hour: '2-digit', minute: '2-digit' })
+}
 
 /** "Order #32" when the number is known; otherwise the end of the id, as before. */
 const orderLabel = (ticket: Pick<Ticket, 'order_id' | 'order_display_id'>) =>
@@ -666,6 +698,56 @@ export default function SupportTicketsPage() {
         ? 'Automatic reply'
         : 'Support team'
 
+  // Guest tickets: email drafts and sent emails, shown in the thread at their time.
+  const guestRecipient =
+    selectedTicket && !selectedTicket.customer_id ? (selectedTicket.contact_email ?? null) : null
+  const guestEmail = useGuestEmailDrafts(guestRecipient ? (selectedTicket?.id ?? null) : null)
+
+  const thread = useMemo<ThreadItem[]>(() => {
+    const items: ThreadItem[] = (details?.messages ?? []).map((message) => ({
+      kind: 'message',
+      at: message.created_at,
+      message,
+    }))
+    if (guestRecipient) {
+      for (const draft of guestEmail.drafts) {
+        // Placed where it was written: updated_at also moves on later status changes.
+        items.push({ kind: 'email', at: draft.created_at ?? '', draft })
+      }
+    }
+    const time = (item: ThreadItem) => {
+      const value = Date.parse(item.at)
+      return Number.isFinite(value) ? value : Number.MAX_SAFE_INTEGER
+    }
+    // Stable: equal times keep messages before emails, in their own order.
+    return items
+      .map((item, index) => ({ item, index }))
+      .sort((a, b) => time(a.item) - time(b.item) || a.index - b.index)
+      .map(({ item }) => item)
+  }, [details?.messages, guestEmail.drafts, guestRecipient])
+
+  // Open a ticket at its latest message; follow new messages only when already at the bottom,
+  // so reading older messages is never interrupted by the poll.
+  const threadRef = useRef<HTMLDivElement>(null)
+  const scrolledFor = useRef<{ ticket: string | null; count: number; tab: string }>({
+    ticket: null,
+    count: 0,
+    tab: '',
+  })
+  useEffect(() => {
+    const el = threadRef.current
+    const previous = scrolledFor.current
+    scrolledFor.current = { ticket: selectedTicketId, count: thread.length, tab: activeTab }
+    if (!el || activeTab !== 'conversation') return
+    const reopened = previous.ticket !== selectedTicketId || previous.tab !== activeTab
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 160
+    if (reopened || (thread.length > previous.count && nearBottom)) {
+      requestAnimationFrame(() => {
+        el.scrollTop = el.scrollHeight
+      })
+    }
+  }, [selectedTicketId, thread.length, activeTab])
+
   const contextPanelProps = selectedTicket
     ? {
         selectedTicket: selectedTicket as Ticket,
@@ -694,11 +776,11 @@ export default function SupportTicketsPage() {
   return (
     <Container className="bg-ui-bg-subtle/20 p-0">
       <div className="flex h-dvh flex-col overflow-hidden lg:h-[calc(100vh-57px)]">
-        <SupportHelpStrip config={config} />
+        <SupportHelpStrip config={config} onOpenAiSettings={() => setShowAiSettings(true)} />
         <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
           {/* Left: ticket list */}
           <div
-            className={`${mobileView === 'detail' ? 'hidden' : 'flex'} bg-ui-bg-base w-full flex-shrink-0 flex-col border-r lg:flex lg:w-[380px]`}
+            className={`${mobileView === 'detail' ? 'hidden' : 'flex'} bg-ui-bg-base w-full flex-shrink-0 flex-col border-r lg:flex lg:w-[320px] xl:w-[340px]`}
           >
             <div className="space-y-3 border-b p-4 lg:p-6">
               <div className="flex items-center justify-between">
@@ -949,55 +1031,92 @@ export default function SupportTicketsPage() {
               </div>
             ) : (
               <>
-                {/* Ticket header */}
-                <div className="bg-ui-bg-base flex items-center gap-3 border-b px-4 py-4 lg:px-8 lg:py-5">
-                  <button
-                    onClick={() => setMobileView('list')}
-                    className="hover:bg-ui-bg-subtle -ml-1 flex-shrink-0 rounded-lg p-1 transition-colors lg:hidden"
-                    aria-label="Back to tickets"
-                  >
-                    <ChevronLeft className="text-ui-fg-subtle h-5 w-5" />
-                  </button>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-ui-fg-subtle mb-1 flex items-center gap-1.5">
-                      <Clock className="h-3.5 w-3.5" />
-                      <Text size="xsmall">Opened {formatDateTime(selectedTicket.created_at)}</Text>
-                    </div>
-                    <Heading level="h1" className="line-clamp-1 text-xl font-bold lg:text-2xl">
-                      {selectedTicket.subject}
-                    </Heading>
-                  </div>
-                  <div className="flex flex-shrink-0 items-center gap-2">
-                    {selectedTicket.order_id && (
-                      <a
-                        href={`/app/orders/${selectedTicket.order_id}`}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        <Badge color="orange" className="hidden h-8 gap-1.5 px-3 sm:inline-flex">
-                          {orderLabel(selectedTicket)}
-                        </Badge>
-                      </a>
-                    )}
-                    {canReplyToCustomer && otherCustomerTickets.length > 0 && (
-                      <Button
-                        variant="secondary"
-                        size="small"
-                        onClick={() => setShowMergeModal(true)}
-                      >
-                        Merge…
-                      </Button>
-                    )}
-                    <Button
-                      variant="danger"
-                      size="small"
-                      onClick={() => void deleteTicket()}
-                      disabled={saving}
-                      aria-label="Delete ticket"
+                {/* Ticket header: subject, who, status and actions on two short lines */}
+                <div className="bg-ui-bg-base border-b px-4 pt-3 lg:px-6">
+                  <div className="flex items-start gap-3">
+                    <button
+                      onClick={() => setMobileView('list')}
+                      className="hover:bg-ui-bg-subtle -ml-1 flex-shrink-0 rounded-lg p-1 transition-colors lg:hidden"
+                      aria-label="Back to tickets"
                     >
-                      <Trash />
-                    </Button>
+                      <ChevronLeft className="text-ui-fg-subtle h-5 w-5" />
+                    </button>
+                    <div className="min-w-0 flex-1">
+                      <Heading level="h1" className="line-clamp-1 text-base font-semibold lg:text-lg">
+                        {selectedTicket.subject}
+                      </Heading>
+                      <div className="text-ui-fg-subtle mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                        <Badge size="2xsmall" color={statusColor(selectedTicket.status)}>
+                          {statusName(displayStatus(selectedTicket.status))}
+                        </Badge>
+                        <Text size="xsmall" className="truncate">
+                          {customerMissing
+                            ? 'Deleted customer'
+                            : (customerName ?? customerEmail ?? customerLabel(selectedTicket))}
+                          {selectedTicket.customer_id ? '' : ' · email only'}
+                        </Text>
+                        <Text size="xsmall" className="flex items-center gap-1">
+                          <Clock className="h-3 w-3" />
+                          Opened {formatDateTime(selectedTicket.created_at)}
+                        </Text>
+                      </div>
+                    </div>
+                    <div className="flex flex-shrink-0 items-center gap-2">
+                      {selectedTicket.order_id && (
+                        <a
+                          href={`/app/orders/${selectedTicket.order_id}`}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          <Badge color="orange" className="hidden h-7 gap-1.5 px-2.5 sm:inline-flex">
+                            {orderLabel(selectedTicket)}
+                          </Badge>
+                        </a>
+                      )}
+                      {canReplyToCustomer && otherCustomerTickets.length > 0 && (
+                        <Button
+                          variant="secondary"
+                          size="small"
+                          onClick={() => setShowMergeModal(true)}
+                        >
+                          Merge…
+                        </Button>
+                      )}
+                      {contextPanelProps && (
+                        <Button
+                          variant="secondary"
+                          size="small"
+                          className="gap-1.5 xl:hidden"
+                          onClick={() => setShowContext(true)}
+                          aria-label="Show customer and ticket details"
+                        >
+                          <User className="h-4 w-4" /> Details
+                        </Button>
+                      )}
+                      <Button
+                        variant="transparent"
+                        size="small"
+                        className="text-ui-fg-subtle hover:text-ui-fg-error"
+                        onClick={() => void deleteTicket()}
+                        disabled={saving}
+                        aria-label="Delete ticket"
+                        title="Delete ticket"
+                      >
+                        <Trash />
+                      </Button>
+                    </div>
                   </div>
+                  <Tabs value={activeTab} onValueChange={handleTabChange} className="mt-2">
+                    <Tabs.List className="-mb-px w-fit gap-1 border-0 bg-transparent p-0">
+                      <Tabs.Trigger value="conversation">Conversation</Tabs.Trigger>
+                      <Tabs.Trigger value="notes">
+                        Internal notes{details?.notes.length ? ` (${details.notes.length})` : ''}
+                      </Tabs.Trigger>
+                      <Tabs.Trigger value="events">Activity</Tabs.Trigger>
+                      <Tabs.Trigger value="ai">AI suggestions</Tabs.Trigger>
+                    </Tabs.List>
+                  </Tabs>
+                  <div className="h-2" />
                 </div>
 
                 {selectedOutsideList && (
@@ -1015,90 +1134,90 @@ export default function SupportTicketsPage() {
 
                 {/* Tabs & content */}
                 <div className="flex min-h-0 flex-1 flex-col">
-                  <div className="px-4 pt-4 lg:px-8 lg:pt-6">
-                    <Tabs value={activeTab} onValueChange={handleTabChange}>
-                      <Tabs.List className="w-fit">
-                        <Tabs.Trigger value="conversation">Conversation</Tabs.Trigger>
-                        <Tabs.Trigger value="notes">
-                          Internal notes ({details?.notes.length || 0})
-                        </Tabs.Trigger>
-                        <Tabs.Trigger value="events">Activity</Tabs.Trigger>
-                        <Tabs.Trigger value="ai">AI suggestions</Tabs.Trigger>
-                      </Tabs.List>
-                    </Tabs>
-                  </div>
-
-                  <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-4 lg:p-8">
+                  <div
+                    ref={threadRef}
+                    className="custom-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-4 lg:px-6"
+                  >
                     {activeTab === 'conversation' && (
-                      <div className="mx-auto max-w-4xl space-y-6">
+                      <div className="mx-auto max-w-3xl space-y-3">
                         {loadingDetails && !details ? (
                           <div className="flex h-64 items-center justify-center">
                             <Spinner className="animate-spin" />
                           </div>
-                        ) : details?.messages.length ? (
-                          details.messages.map((msg) => (
-                            <div
-                              key={msg.id}
-                              className={`flex flex-col ${msg.sender_type === 'customer' ? 'items-start' : 'items-end'}`}
-                            >
-                              <div
-                                className={`max-w-[75%] rounded-2xl p-5 text-sm shadow-sm ${
-                                  msg.sender_type === 'customer'
-                                    ? 'bg-ui-bg-base text-ui-fg-base rounded-tl-none border'
-                                    : 'bg-ui-bg-interactive text-ui-fg-on-color rounded-tr-none'
-                                }`}
-                              >
-                                <Text size="small" className="leading-relaxed whitespace-pre-wrap">
-                                  {msg.message}
-                                </Text>
-                                {(() => {
-                                  const attachments = normalizeAttachments(msg.attachments)
-                                  if (attachments.length === 0) return null
-                                  return (
-                                    <div className="mt-4 flex flex-wrap gap-2 border-t border-current/10 pt-3">
-                                      {attachments.map((a) => (
-                                        <a
-                                          key={a.url || a.filename}
-                                          href={getAttachmentUrl(a)}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs transition-colors ${
-                                            msg.sender_type === 'customer'
-                                              ? 'bg-ui-bg-subtle hover:bg-ui-bg-subtle-pressed'
-                                              : 'bg-white/10 hover:bg-white/20'
-                                          }`}
-                                        >
-                                          <PaperClip className="h-3 w-3" /> {a.filename}
-                                        </a>
-                                      ))}
+                        ) : thread.length ? (
+                          thread.map((item, index) => {
+                            const day = dayKey(item.at)
+                            const showDay = index === 0 || dayKey(thread[index - 1].at) !== day
+                            const outgoing =
+                              item.kind === 'email' || item.message.sender_type !== 'customer'
+                            return (
+                              <div key={item.kind === 'email' ? item.draft.id : item.message.id}>
+                                {showDay && (
+                                  <div className="my-4 flex items-center gap-3">
+                                    <div className="bg-ui-border-base h-px flex-1" />
+                                    <Text size="xsmall" className="text-ui-fg-muted">
+                                      {formatDay(item.at)}
+                                    </Text>
+                                    <div className="bg-ui-border-base h-px flex-1" />
+                                  </div>
+                                )}
+                                <div className={`flex flex-col ${outgoing ? 'items-end' : 'items-start'}`}>
+                                  {item.kind === 'email' ? (
+                                    <GuestEmailBubble
+                                      draft={item.draft}
+                                      email={guestEmail}
+                                      canSend={config?.guest_replies.can_send ?? true}
+                                    />
+                                  ) : (
+                                    <div
+                                      className={`max-w-[80%] rounded-2xl px-4 py-3 ${
+                                        outgoing
+                                          ? 'bg-ui-bg-interactive text-ui-fg-on-color rounded-tr-sm'
+                                          : 'bg-ui-bg-base text-ui-fg-base rounded-tl-sm border'
+                                      }`}
+                                    >
+                                      <Text size="small" className="leading-relaxed whitespace-pre-wrap">
+                                        {item.message.message}
+                                      </Text>
+                                      {(() => {
+                                        const attachments = normalizeAttachments(item.message.attachments)
+                                        if (attachments.length === 0) return null
+                                        return (
+                                          <div className="mt-2 flex flex-wrap gap-2">
+                                            {attachments.map((a) => (
+                                              <a
+                                                key={a.url || a.filename}
+                                                href={getAttachmentUrl(a)}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs transition-colors ${
+                                                  outgoing
+                                                    ? 'bg-white/10 hover:bg-white/20'
+                                                    : 'bg-ui-bg-subtle hover:bg-ui-bg-subtle-pressed'
+                                                }`}
+                                              >
+                                                <PaperClip className="h-3 w-3" /> {a.filename}
+                                              </a>
+                                            ))}
+                                          </div>
+                                        )
+                                      })()}
                                     </div>
-                                  )
-                                })()}
+                                  )}
+                                  <Text size="xsmall" className="text-ui-fg-muted mt-1 px-1">
+                                    {item.kind === 'email'
+                                      ? 'Support team, by email'
+                                      : senderLabel(item.message.sender_type)}{' '}
+                                    · {formatTime(item.at)}
+                                  </Text>
+                                </div>
                               </div>
-                              <Text size="xsmall" className="text-ui-fg-subtle mt-2 px-1">
-                                {senderLabel(msg.sender_type)} · {formatDate(msg.created_at)}
-                              </Text>
-                            </div>
-                          ))
+                            )
+                          })
                         ) : (
                           <div className="py-20 text-center">
                             <Text className="text-ui-fg-subtle">No messages yet.</Text>
                           </div>
-                        )}
-                        {!selectedTicket.customer_id && selectedTicket.contact_email && (
-                          <GuestEmailReplyPanel
-                            key={selectedTicket.id}
-                            ticketId={selectedTicket.id}
-                            recipient={selectedTicket.contact_email}
-                            canSend={config?.guest_replies.can_send ?? true}
-                            cannotSendReason={config?.guest_replies.reason ?? null}
-                          />
-                        )}
-                        {!selectedTicket.customer_id && !selectedTicket.contact_email && (
-                          <Text size="small" className="text-ui-fg-subtle text-center">
-                            This ticket has no customer account or email address any more, so it
-                            cannot be answered. Close it when you are done.
-                          </Text>
                         )}
                       </div>
                     )}
@@ -1214,23 +1333,41 @@ export default function SupportTicketsPage() {
                     )}
                   </div>
 
-                  {/* Reply box (signed-in customers; guests use the email panel above) */}
+                  {/* Composer, docked under the thread so the conversation keeps the space */}
+                  {activeTab === 'conversation' && guestRecipient && (
+                    <div className="bg-ui-bg-base border-t px-4 py-3 lg:px-6">
+                      <div className="mx-auto max-w-3xl">
+                        <GuestEmailComposer
+                          recipient={guestRecipient}
+                          email={guestEmail}
+                          canSend={config?.guest_replies.can_send ?? true}
+                          cannotSendReason={config?.guest_replies.reason ?? null}
+                        />
+                      </div>
+                    </div>
+                  )}
+                  {activeTab === 'conversation' &&
+                    !selectedTicket.customer_id &&
+                    !selectedTicket.contact_email && (
+                      <div className="bg-ui-bg-base border-t px-4 py-3 lg:px-6">
+                        <Text size="small" className="text-ui-fg-subtle text-center">
+                          This ticket has no customer account or email address any more, so it
+                          cannot be answered. Close it when you are done.
+                        </Text>
+                      </div>
+                    )}
                   {canReplyToCustomer && activeTab === 'conversation' && (
-                    <div className="px-4 pb-4 lg:px-8 lg:pb-8">
-                      <div className="bg-ui-bg-base flex flex-col overflow-hidden rounded-2xl border shadow-sm">
+                    <div className="bg-ui-bg-base border-t px-4 py-3 lg:px-6">
+                      <div className="mx-auto max-w-3xl space-y-2">
                         {analysis?.suggested_response && (
-                          <div className="bg-ui-bg-subtle/30 flex items-center justify-between border-b px-6 py-3">
-                            <div className="flex items-center gap-3">
-                              <Sparkles className="text-ui-fg-interactive h-5 w-5" />
-                              <div>
-                                <Text size="small" weight="plus">
-                                  AI suggested a reply
-                                </Text>
-                                <Text size="xsmall" className="text-ui-fg-subtle">
-                                  Confidence {Math.round((analysis.response_confidence || 0) * 100)}
-                                  %. Read it before sending.
-                                </Text>
-                              </div>
+                          <div className="bg-ui-bg-subtle flex items-center justify-between gap-3 rounded-lg px-3 py-2">
+                            <div className="flex min-w-0 items-center gap-2">
+                              <Sparkles className="text-ui-fg-interactive h-4 w-4 flex-shrink-0" />
+                              <Text size="xsmall" className="truncate">
+                                AI suggested a reply (confidence{' '}
+                                {Math.round((analysis.response_confidence || 0) * 100)}%). Read it
+                                before sending.
+                              </Text>
                             </div>
                             <Button
                               variant="secondary"
@@ -1241,138 +1378,123 @@ export default function SupportTicketsPage() {
                             </Button>
                           </div>
                         )}
-
-                        <div className="space-y-4 p-6">
-                          <div className="flex flex-col gap-4 lg:flex-row">
-                            <div className="flex-1">
-                              <Textarea
-                                placeholder="Write your reply to the customer…"
-                                rows={4}
-                                value={reply}
-                                onChange={(e) => setReply(e.target.value)}
-                                aria-label="Reply to the customer"
-                                className="resize-none text-base leading-relaxed"
-                              />
-                            </div>
-                            <div className="w-full space-y-3 lg:w-[240px]">
-                              <Select
-                                value=""
-                                onValueChange={(v) =>
-                                  setReply((prev) => (prev ? `${prev}\n\n${v}` : v))
-                                }
-                              >
-                                <Select.Trigger className="h-9" aria-label="Insert a saved answer">
-                                  <Select.Value placeholder="Insert a saved answer" />
-                                </Select.Trigger>
-                                <Select.Content>
-                                  {CANNED_RESPONSES.map((r) => (
-                                    <Select.Item key={r.label} value={r.value}>
-                                      {r.label}
-                                    </Select.Item>
-                                  ))}
-                                </Select.Content>
-                              </Select>
-                              <Button
-                                variant="secondary"
-                                className="h-9 w-full gap-2"
-                                onClick={() => fileInputRef.current?.click()}
-                                isLoading={uploadingFiles}
-                              >
-                                <PaperClip className="h-4 w-4" /> Attach files
-                              </Button>
-                              <input
-                                ref={fileInputRef}
-                                type="file"
-                                multiple
-                                className="hidden"
-                                onChange={(e) => {
-                                  const input = e.currentTarget
-                                  if (input.files) void uploadFiles(input.files)
-                                  // Lets the same file be picked again after removing it.
-                                  input.value = ''
-                                }}
-                              />
-                            </div>
-                          </div>
-
-                          {pendingAttachments.length > 0 && (
-                            <div className="flex flex-wrap gap-2 pt-2">
-                              {pendingAttachments.map((a, i) => (
-                                <Badge
-                                  key={a.url || a.filename || String(i)}
-                                  size="small"
-                                  className="gap-1.5 pr-1"
-                                >
-                                  {a.filename}
-                                  <button
-                                    type="button"
-                                    aria-label={`Remove attachment ${a.filename}`}
-                                    onClick={() =>
-                                      selectedTicketId &&
-                                      updateDraft(selectedTicketId, (draft) => ({
-                                        ...draft,
-                                        attachments: draft.attachments.filter(
-                                          (_, idx) => idx !== i,
-                                        ),
-                                      }))
-                                    }
-                                    className="hover:text-ui-fg-base text-ui-fg-subtle"
-                                  >
-                                    ×
-                                  </button>
-                                </Badge>
-                              ))}
-                            </div>
-                          )}
-
-                          <div className="border-ui-border-base flex flex-wrap items-center justify-between gap-3 border-t pt-4">
-                            <div className="max-w-md">
-                              <Text size="xsmall" className="text-ui-fg-subtle">
-                                {config?.customer_replies.can_send
-                                  ? `The reply is emailed to ${customerEmail ?? 'the customer'} and the status becomes Waiting for customer.`
-                                  : config?.customer_replies.reason
-                                    ? 'The reply is saved on the ticket but cannot be emailed yet. Ask the person who installed your shop.'
-                                    : 'The reply is saved on the ticket.'}
-                              </Text>
-                              {!config?.customer_replies.can_send &&
-                              config?.customer_replies.reason ? (
-                                <InstallerHint className="mt-2">
-                                  <Text size="xsmall" className="break-words whitespace-pre-wrap">
-                                    {config.customer_replies.reason}
-                                  </Text>
-                                </InstallerHint>
-                              ) : null}
-                            </div>
-                            <div className="flex min-w-0 items-center gap-3">
-                              {/* Who receives this reply, so it cannot go to the wrong customer. */}
-                              <Text
+                        {/* Who receives this reply, so it cannot go to the wrong customer. */}
+                        <Text
+                          size="xsmall"
+                          className="text-ui-fg-subtle truncate"
+                          title={customerEmail ?? undefined}
+                        >
+                          To:{' '}
+                          <span className="text-ui-fg-base">
+                            {customerEmail
+                              ? customerName && customerName !== customerEmail
+                                ? `${customerName} <${customerEmail}>`
+                                : customerEmail
+                              : (customerName ?? 'Loading…')}
+                          </span>
+                        </Text>
+                        <Textarea
+                          placeholder="Write your reply to the customer…"
+                          rows={3}
+                          value={reply}
+                          onChange={(e) => setReply(e.target.value)}
+                          aria-label="Reply to the customer"
+                          className="max-h-[40vh] min-h-[76px] resize-y leading-relaxed"
+                        />
+                        {pendingAttachments.length > 0 && (
+                          <div className="flex flex-wrap gap-2">
+                            {pendingAttachments.map((a, i) => (
+                              <Badge
+                                key={a.url || a.filename || String(i)}
                                 size="small"
-                                className="text-ui-fg-subtle min-w-0 truncate"
-                                title={customerEmail ?? undefined}
+                                className="gap-1.5 pr-1"
                               >
-                                To:{' '}
-                                <span className="text-ui-fg-base">
-                                  {customerEmail
-                                    ? customerName && customerName !== customerEmail
-                                      ? `${customerName} <${customerEmail}>`
-                                      : customerEmail
-                                    : (customerName ?? 'Loading…')}
-                                </span>
-                              </Text>
-                              <Button
-                                onClick={sendReply}
-                                disabled={
-                                  (!reply.trim() && pendingAttachments.length === 0) ||
-                                  saving ||
-                                  (!customerEmail && !customerName)
-                                }
-                                isLoading={saving}
-                              >
-                                Send reply
-                              </Button>
-                            </div>
+                                {a.filename}
+                                <button
+                                  type="button"
+                                  aria-label={`Remove attachment ${a.filename}`}
+                                  onClick={() =>
+                                    selectedTicketId &&
+                                    updateDraft(selectedTicketId, (draft) => ({
+                                      ...draft,
+                                      attachments: draft.attachments.filter((_, idx) => idx !== i),
+                                    }))
+                                  }
+                                  className="hover:text-ui-fg-base text-ui-fg-subtle"
+                                >
+                                  ×
+                                </button>
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Select
+                            value=""
+                            onValueChange={(v) => setReply((prev) => (prev ? `${prev}\n\n${v}` : v))}
+                          >
+                            <Select.Trigger className="h-8 w-auto min-w-[170px]" aria-label="Insert a saved answer">
+                              <Select.Value placeholder="Saved answers" />
+                            </Select.Trigger>
+                            <Select.Content>
+                              {CANNED_RESPONSES.map((r) => (
+                                <Select.Item key={r.label} value={r.value}>
+                                  {r.label}
+                                </Select.Item>
+                              ))}
+                            </Select.Content>
+                          </Select>
+                          <Button
+                            variant="transparent"
+                            size="small"
+                            className="gap-1.5"
+                            onClick={() => fileInputRef.current?.click()}
+                            isLoading={uploadingFiles}
+                          >
+                            <PaperClip className="h-4 w-4" /> Attach
+                          </Button>
+                          <input
+                            ref={fileInputRef}
+                            type="file"
+                            multiple
+                            className="hidden"
+                            onChange={(e) => {
+                              const input = e.currentTarget
+                              if (input.files) void uploadFiles(input.files)
+                              // Lets the same file be picked again after removing it.
+                              input.value = ''
+                            }}
+                          />
+                          <div className="ml-auto flex-shrink-0">
+                            <Button
+                              size="small"
+                              onClick={sendReply}
+                              disabled={
+                                (!reply.trim() && pendingAttachments.length === 0) ||
+                                saving ||
+                                (!customerEmail && !customerName)
+                              }
+                              isLoading={saving}
+                              className="whitespace-nowrap"
+                            >
+                              Send reply
+                            </Button>
                           </div>
                         </div>
+                        <Text size="xsmall" className="text-ui-fg-subtle">
+                          {config?.customer_replies.can_send
+                            ? 'Emailed to the customer; the status becomes Waiting for customer.'
+                            : config?.customer_replies.reason
+                              ? 'Saved on the ticket but not emailed yet: email sending is not set up.'
+                              : 'Saved on the ticket.'}
+                        </Text>
+                        {!config?.customer_replies.can_send && config?.customer_replies.reason ? (
+                          <InstallerHint>
+                            <Text size="xsmall" className="break-words whitespace-pre-wrap">
+                              {config.customer_replies.reason}
+                            </Text>
+                          </InstallerHint>
+                        ) : null}
                       </div>
                     </div>
                   )}
@@ -1384,15 +1506,10 @@ export default function SupportTicketsPage() {
           {/* Right: context sidebar */}
           {selectedTicket && contextPanelProps && (
             <>
-              <button
-                onClick={() => setShowContext(!showContext)}
-                className="bg-ui-bg-interactive text-ui-fg-on-color fixed right-6 bottom-6 flex h-12 w-12 items-center justify-center rounded-full shadow-xl transition-all hover:opacity-90 active:scale-95 lg:hidden"
-                aria-label="Show customer and ticket details"
-              >
-                <User className="h-5 w-5" />
-              </button>
+              {/* Below xl the details open from the header button (Details), not a floating one
+                  that would cover the docked Send button. */}
 
-              <div className="bg-ui-bg-base custom-scrollbar hidden w-[320px] flex-col space-y-8 overflow-y-auto border-l p-8 lg:flex">
+              <div className="bg-ui-bg-base custom-scrollbar hidden w-[300px] flex-shrink-0 flex-col space-y-6 overflow-y-auto border-l p-5 xl:flex">
                 <ContextPanel
                   {...contextPanelProps}
                   onSelectTicket={(id) => {
@@ -1404,7 +1521,7 @@ export default function SupportTicketsPage() {
               </div>
 
               {showContext && (
-                <div className="fixed inset-0 lg:hidden">
+                <div className="fixed inset-0 z-50 xl:hidden">
                   <div
                     className="absolute inset-0 bg-black/40"
                     onClick={() => setShowContext(false)}

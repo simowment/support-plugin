@@ -713,7 +713,7 @@ export default class SupportTicketModuleService extends MedusaService({
       rows.rows?.[0] ??
       (
         await this.getPgConnection().raw(
-          `select "id", "ticket_id", "body", "revision", "status", "subject", "recipient_email", "email_queue_id" from "ticket_outbound_email_draft" where "id" = ? and "deleted_at" is null limit 1`,
+          `select "id", "ticket_id", "body", "revision", "status", "subject", "recipient_email", "email_queue_id", "created_at", "updated_at" from "ticket_outbound_email_draft" where "id" = ? and "deleted_at" is null limit 1`,
           [id],
         )
       ).rows?.[0]
@@ -812,7 +812,7 @@ export default class SupportTicketModuleService extends MedusaService({
 
   async listGuestEmailDrafts(ticketId: string) {
     const result = await this.getPgConnection().raw(
-      `select "id", "ticket_id", "body", "revision", "status", "subject", "recipient_email", "email_queue_id" from "ticket_outbound_email_draft" where "ticket_id" = ? and "deleted_at" is null order by "created_at" asc`,
+      `select "id", "ticket_id", "body", "revision", "status", "subject", "recipient_email", "email_queue_id", "created_at", "updated_at" from "ticket_outbound_email_draft" where "ticket_id" = ? and "deleted_at" is null order by "created_at" asc`,
       [ticketId],
     )
     return (result.rows ?? []).map((row) => this.safeDraft(row))
@@ -828,6 +828,9 @@ export default class SupportTicketModuleService extends MedusaService({
       subject: row.subject,
       recipient_email: row.recipient_email,
       email_queue_id: row.email_queue_id,
+      // Times place the email in the conversation (no body or address data beyond the above).
+      created_at: row.created_at ?? null,
+      updated_at: row.updated_at ?? null,
     }
   }
 

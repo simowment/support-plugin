@@ -1,7 +1,8 @@
-import { Text } from '@medusajs/ui'
+import { Button, Text } from '@medusajs/ui'
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import type { TicketsConfig } from '../lib/ticket-page'
-import { InstallerHint } from '../../../components/ui/installer-hint'
+import { InstallerCode, InstallerHint } from '../../../components/ui/installer-hint'
 import { StatusKindBadge } from '../../../components/ui/status-badge'
 import { formatList, worstStatus, type StatusKind } from '../../../components/ui/format'
 
@@ -27,7 +28,24 @@ function writeHidden(hidden: boolean) {
   }
 }
 
-type StripItem = { title: string; kind: StatusKind; text: string }
+/**
+ * Where each part is changed, shown right on the item. Some parts have an admin page or
+ * panel; the inbound mailbox is set on the host (plugin options from `igm shop configure
+ * mail` / `provision mail`), so that item shows the exact command instead.
+ */
+type StripAction =
+  | { kind: 'link'; label: string; to: string }
+  | { kind: 'ai'; label: string }
+  | { kind: 'command'; label: string; command: string }
+
+type StripItem = { title: string; kind: StatusKind; text: string; actions: StripAction[] }
+
+const EMAIL_SETTINGS: StripAction = { kind: 'link', label: 'Email sending settings', to: '/settings/email' }
+const MAIL_COMMAND: StripAction = {
+  kind: 'command',
+  label: 'Change the support mailbox (on the host)',
+  command: 'node cli/bin/igm.mjs shop configure mail --shop <slug>',
+}
 
 /**
  * S3. One status per part of the support setup, in the five fixed states. Optional parts
@@ -42,6 +60,7 @@ function stripItems(config: TicketsConfig): StripItem[] {
       text: config.inbound_email.enabled
         ? `Emails to ${config.inbound_email.recipients.join(', ') || 'the support address'} become tickets.`
         : 'Emails to the support address do not create tickets; only signed-in customers using the contact form do.',
+      actions: [MAIL_COMMAND],
     },
     {
       title: 'Replies to customers',
@@ -51,6 +70,7 @@ function stripItems(config: TicketsConfig): StripItem[] {
           ? 'Your reply is emailed; the customer can answer by email and it lands on the ticket.'
           : 'Your reply is emailed; customer answers go to the support mailbox.'
         : 'Replies are only saved on the ticket; they are not emailed yet.',
+      actions: [EMAIL_SETTINGS],
     },
     {
       title: 'Email-only guests',
@@ -62,6 +82,7 @@ function stripItems(config: TicketsConfig): StripItem[] {
       text: config.guest_replies.can_send
         ? 'People who wrote by email get a reviewed email reply (Save draft, then Send email).'
         : 'People who wrote by email cannot get an email reply yet. Drafts can still be saved.',
+      actions: [EMAIL_SETTINGS, MAIL_COMMAND],
     },
     {
       title: 'AI suggestions',
@@ -71,11 +92,18 @@ function stripItems(config: TicketsConfig): StripItem[] {
         : config.ai.enabled
           ? `New tickets get a suggested category and reply.${config.ai.auto_reply_enabled ? ' Auto-reply is on.' : ''}`
           : 'Turned off in AI settings.',
+      actions: [
+        {
+          kind: 'ai',
+          label: !config.ai.configured ? 'Set up AI' : config.ai.enabled ? 'AI settings' : 'Turn on in AI settings',
+        },
+      ],
     },
   ]
 }
 
-function Item({ item }: { item: StripItem }) {
+function Item({ item, onOpenAiSettings }: { item: StripItem; onOpenAiSettings?: () => void }) {
+  const commands = item.actions.filter((action) => action.kind === 'command')
   return (
     <div className="min-w-[200px] flex-1">
       <div className="flex items-center gap-2">
@@ -87,6 +115,33 @@ function Item({ item }: { item: StripItem }) {
       <Text size="xsmall" className="text-ui-fg-subtle mt-0.5">
         {item.text}
       </Text>
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+        {item.actions.map((action) =>
+          action.kind === 'link' ? (
+            <Link
+              key={action.label}
+              to={action.to}
+              className="text-ui-fg-interactive hover:text-ui-fg-interactive-hover text-xs font-medium"
+            >
+              {action.label}
+            </Link>
+          ) : action.kind === 'ai' && onOpenAiSettings ? (
+            <Button key={action.label} size="small" variant="secondary" onClick={onOpenAiSettings}>
+              {action.label}
+            </Button>
+          ) : null,
+        )}
+      </div>
+      {commands.map((action) =>
+        action.kind === 'command' ? (
+          <InstallerHint key={action.label} className="mt-1">
+            <Text size="xsmall" className="text-ui-fg-subtle mb-1">
+              {action.label}:
+            </Text>
+            <InstallerCode>{action.command}</InstallerCode>
+          </InstallerHint>
+        ) : null,
+      )}
     </div>
   )
 }
@@ -109,7 +164,13 @@ function summaryLine(items: StripItem[], worst: StatusKind): string {
  * otherwise. Setup itself happens in the backend configuration; technical notes and the
  * host's `setup_help` hint sit in a closed "Technical details" disclosure.
  */
-export function SupportHelpStrip({ config }: { config: TicketsConfig | null }) {
+export function SupportHelpStrip({
+  config,
+  onOpenAiSettings,
+}: {
+  config: TicketsConfig | null
+  onOpenAiSettings?: () => void
+}) {
   const [hiddenChoice, setHiddenChoice] = useState(readHidden)
   const items = config ? stripItems(config) : []
   const worst = config ? worstStatus(items.map((item) => item.kind)) : 'not_checked'
@@ -202,7 +263,7 @@ export function SupportHelpStrip({ config }: { config: TicketsConfig | null }) {
       {config && (
         <div className="flex flex-wrap gap-x-6 gap-y-3">
           {items.map((item) => (
-            <Item key={item.title} item={item} />
+            <Item key={item.title} item={item} onOpenAiSettings={onOpenAiSettings} />
           ))}
         </div>
       )}

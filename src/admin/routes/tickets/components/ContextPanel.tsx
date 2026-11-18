@@ -71,19 +71,9 @@ export const ContextPanel = ({
 
   return (
     <>
-      {activeTab !== 'ai' && (
-        <IntelligencePanel
-          analysis={analysis}
-          loading={loadingAnalysis}
-          config={config}
-          onConfigure={onConfigureAi}
-          onAnalyzeNow={onAnalyzeNow}
-          analyzing={analyzing}
-        />
-      )}
-
-      <div className={activeTab === 'ai' ? '' : 'border-t pt-8'}>
-        <Text size="xsmall" weight="plus" className="text-ui-fg-subtle mb-4 block">
+      {/* What the owner acts on first: who it is, its status and who handles it. */}
+      <div>
+        <Text size="xsmall" weight="plus" className="text-ui-fg-subtle mb-3 block">
           Customer
         </Text>
         <div className="space-y-4">
@@ -156,8 +146,8 @@ export const ContextPanel = ({
       </div>
 
       {selectedTicket.customer_id && !customerMissing && (
-        <div className="border-t pt-8">
-          <div className="mb-4 flex items-center justify-between">
+        <div className="border-t pt-5">
+          <div className="mb-3 flex items-center justify-between">
             <Text size="xsmall" weight="plus" className="text-ui-fg-subtle">
               Other tickets from this customer
             </Text>
@@ -202,6 +192,20 @@ export const ContextPanel = ({
               </Button>
             </div>
           )}
+        </div>
+      )}
+
+      {/* The AI tab shows the full analysis; here it is a summary with its settings. */}
+      {activeTab !== 'ai' && (
+        <div className="border-t pt-5">
+          <IntelligencePanel
+            analysis={analysis}
+            loading={loadingAnalysis}
+            config={config}
+            onConfigure={onConfigureAi}
+            onAnalyzeNow={onAnalyzeNow}
+            analyzing={analyzing}
+          />
         </div>
       )}
     </>
