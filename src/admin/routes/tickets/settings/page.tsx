@@ -1,7 +1,7 @@
 import { defineRouteConfig } from '@medusajs/admin-sdk'
 import { Button, Input, Select, Switch, Text, Textarea, toast } from '@medusajs/ui'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { ErrorState } from '../../../components/ui/error-state'
 import { InstallerCode, InstallerHint } from '../../../components/ui/installer-hint'
 import { SaveBar, SavedAutomatically } from '../../../components/ui/save-bar'
@@ -169,7 +169,6 @@ const SupportSettingsPage = () => {
   const [savedForm, setSavedForm] = useState<AiForm | null>(null)
   const [editingKey, setEditingKey] = useState(false)
   const [savingForm, setSavingForm] = useState(false)
-  const { hash } = useLocation()
 
   const apply = useCallback((next: SupportSettings, resetForm: boolean) => {
     setData(next)
@@ -196,13 +195,6 @@ const SupportSettingsPage = () => {
   useEffect(() => {
     void load()
   }, [load])
-
-  // Links from the inbox (/tickets/settings#ai) land on their section once it renders.
-  useEffect(() => {
-    if (!data || !hash) return
-    const target = document.getElementById(decodeURIComponent(hash.slice(1)))
-    target?.scrollIntoView({ block: 'start' })
-  }, [data, hash])
 
   const dirty = !sameForm(form, savedForm)
   useUnsavedGuard(dirty)
