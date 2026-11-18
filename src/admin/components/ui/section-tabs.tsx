@@ -20,7 +20,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
  *
  *   <SectionTabs>
  *     {alert}                                   // not a section: shown on every tab
- *     <TabSection id="break" title="Take a break">…cards…</TabSection>
+ *     <TabSection id="pause" title="Pause shop">…cards…</TabSection>
  *     <TabSection id="access" title="Who can see the store">…</TabSection>
  *   </SectionTabs>
  *
