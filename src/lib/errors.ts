@@ -48,3 +48,7 @@ export const GUEST_TICKET_USE_EMAIL_DRAFT_MESSAGE =
   'This is a guest ticket (no customer account), so a plain reply would reach nobody. ' +
   'Answer with an email draft: POST /admin/tickets/:id/email-drafts, then POST /admin/tickets/email-drafts/:draft_id/send ' +
   '(in the admin: Save draft, then Send email). Use a note for internal comments.'
+
+/** Shown when the owner turned off emailing replies in Support inbox > Settings. */
+export const EMAIL_REPLIES_OFF_MESSAGE =
+  'Emailing replies to customers is turned off in Support inbox > Settings.'

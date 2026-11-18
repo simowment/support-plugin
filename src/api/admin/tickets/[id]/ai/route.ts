@@ -109,7 +109,7 @@ export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse)
     if (
       ticket.customer_id &&
       autoReplyEnabled &&
-      aiService.shouldAutoReply(analysis) &&
+      aiService.shouldAutoReply(analysis, await aiService.getAutoReplyMinConfidence()) &&
       analysis.suggested_response
     ) {
       const didMark = await aiService.markAutoReplied(analysis.id)
@@ -132,7 +132,7 @@ export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse)
           message: firstCustomerMessage.message,
         },
         logger,
-        ticketService.getConfig().discordWebhookUrl,
+        (await ticketService.getEffectiveConfig()).discordWebhookUrl,
       )
     }
 

@@ -5,6 +5,8 @@ import { AITicketAnalysis } from './models/ai-ticket-analysis'
 import { AISetting } from './models/ai-setting'
 import {
   CONFIDENCE_THRESHOLD_AUTO_REPLY,
+  AUTO_REPLY_MIN_CONFIDENCE_KEY,
+  AUTO_REPLY_MIN_CONFIDENCE_FLOOR,
   PROVIDER_KEYS,
   PROMPT_KEYS,
   BLOCKED_AUTO_REPLY_CATEGORIES,
@@ -376,12 +378,71 @@ export default class SupportTicketAIModuleService extends MedusaService({
 
   // --- Auto-reply logic ---
 
-  shouldAutoReply(analysis: AnalysisRecord): boolean {
+  /**
+   * Lowest reply confidence (0 to 1) at which auto-reply sends. Saved in Support inbox >
+   * Settings; default CONFIDENCE_THRESHOLD_AUTO_REPLY.
+   */
+  async getAutoReplyMinConfidence(): Promise<number> {
+    const [setting] = await this.listAISettings({ key: AUTO_REPLY_MIN_CONFIDENCE_KEY }, { take: 1 })
+    const value = setting ? Number(setting.value) : NaN
+    return Number.isFinite(value) && value >= AUTO_REPLY_MIN_CONFIDENCE_FLOOR && value <= 1
+      ? value
+      : CONFIDENCE_THRESHOLD_AUTO_REPLY
+  }
+
+  /** Saves the auto-reply confidence; null goes back to the default. */
+  async setAutoReplyMinConfidence(value: number | null): Promise<void> {
+    const [existing] = await this.listAISettings({ key: AUTO_REPLY_MIN_CONFIDENCE_KEY }, { take: 1 })
+    if (value === null) {
+      if (existing) await this.deleteAISettings([existing.id])
+      return
+    }
+    if (existing) {
+      await this.updateAISettings([{ id: existing.id, value: String(value) }])
+    } else {
+      await this.createAISettings([{ key: AUTO_REPLY_MIN_CONFIDENCE_KEY, value: String(value) }])
+    }
+  }
+
+  /**
+   * What the host sets for the AI (module options from the environment), for the settings
+   * page. Never returns the API key or the encryption secret, only whether they are set.
+   */
+  getHostAiDefaults(): {
+    api_key_set: boolean
+    model: string | null
+    base_url: string | null
+    provider: string | null
+    extra_headers: number
+    encryption_key_set: boolean
+  } {
+    return {
+      api_key_set: Boolean(this.options_.openai_api_key?.trim()),
+      model: this.options_.openai_model?.trim() || null,
+      base_url: this.options_.openai_base_url?.trim() || null,
+      provider: this.options_.default_provider?.trim() || null,
+      extra_headers: Object.keys(this.options_.openai_headers ?? {}).length,
+      encryption_key_set: Boolean(this.encryptionSecret_),
+    }
+  }
+
+  /** Setting keys that have a row (saved in the admin), for the settings page source badges. */
+  async getStoredSettingKeys(): Promise<string[]> {
+    const rows = (await this.listAISettings({}, { select: ['key'], take: 100 })) as Array<{
+      key: string
+    }>
+    return rows.map((row) => row.key)
+  }
+
+  shouldAutoReply(
+    analysis: AnalysisRecord,
+    minConfidence: number = CONFIDENCE_THRESHOLD_AUTO_REPLY,
+  ): boolean {
     if (!analysis) return false
     if (analysis.auto_replied) return false
     if (!analysis.auto_reply_eligible) return false
     if (!analysis.suggested_response) return false
-    if ((analysis.response_confidence ?? 0) < CONFIDENCE_THRESHOLD_AUTO_REPLY) return false
+    if ((analysis.response_confidence ?? 0) < minConfidence) return false
 
     const category = (analysis.category ?? '').toLowerCase().trim()
     if (BLOCKED_AUTO_REPLY_CATEGORIES.includes(category)) return false

@@ -1,6 +1,10 @@
 export const SUPPORT_TICKET_AI_MODULE = 'supportTicketAi'
 
 export const CONFIDENCE_THRESHOLD_AUTO_REPLY = 0.85
+/** ai_setting key for the confidence set in Support inbox > Settings. */
+export const AUTO_REPLY_MIN_CONFIDENCE_KEY = 'auto_reply_min_confidence'
+/** The owner cannot set auto-reply below this confidence. */
+export const AUTO_REPLY_MIN_CONFIDENCE_FLOOR = 0.5
 
 export const API_TIMEOUT_MS = 30000
 

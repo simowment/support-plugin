@@ -4,6 +4,7 @@ import { SUPPORT_TICKET_AI_MODULE } from '../../../../modules/ai/constants'
 import type SupportTicketAIModuleService from '../../../../modules/ai/service'
 import {
   EMAIL_QUEUE_NOT_CONFIGURED_MESSAGE,
+  EMAIL_REPLIES_OFF_MESSAGE,
   INBOUND_EMAIL_DISABLED_MESSAGE,
   REPLY_DOMAIN_NOT_CONFIGURED_MESSAGE,
 } from '../../../../lib/errors'
@@ -17,7 +18,7 @@ import {
  */
 export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) {
   const service = resolveTicketService(req)
-  const config = service.getConfig()
+  const config = await service.getEffectiveConfig()
   const queueRegistered = req.scope.hasRegistration(config.emailQueueModule)
   const replyDomain = service.hasReplyDomain()
   // reply+ addresses only bring answers back to the ticket when inbound email is on.
@@ -48,7 +49,7 @@ export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) 
       reason: !queueRegistered
         ? noQueue
         : !config.emailCustomerReplies
-          ? 'Emailing replies to customers is turned off in the plugin options.'
+          ? EMAIL_REPLIES_OFF_MESSAGE
           : null,
     },
     guest_replies: {
@@ -62,7 +63,12 @@ export async function GET(req: AuthenticatedMedusaRequest, res: MedusaResponse) 
             : null,
     },
     ai,
+    // True only when a webhook is set on the host and the switch in Settings is on.
     discord_notifications: Boolean(config.discordWebhookUrl),
+    discord: {
+      webhook_set: config.discordWebhookSet,
+      enabled: config.discordNotificationsEnabled,
+    },
     setup_help: config.setupHelp,
   })
 }

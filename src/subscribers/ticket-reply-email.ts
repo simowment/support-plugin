@@ -60,7 +60,7 @@ export default async function emailAdminReplyToCustomer({
 
   const logger = container.resolve<Logger>('logger')
   const ticketService: SupportTicketModuleService = container.resolve(SUPPORT_TICKET_MODULE)
-  const config = ticketService.getConfig()
+  const config = await ticketService.getEffectiveConfig()
   if (!config.emailCustomerReplies) return
 
   const ticket = await ticketService.getTicketById(data.ticket_id)

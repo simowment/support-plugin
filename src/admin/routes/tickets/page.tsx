@@ -28,8 +28,10 @@ import {
   usePrompt,
 } from '@medusajs/ui'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { adminFetch } from '../../lib/api'
 import { InstallerHint } from '../../components/ui/installer-hint'
+import { SettingsLink } from '../../components/ui/settings-page'
 import { ErrorState, errorMessage } from '../../components/ui/error-state'
 import { useUnsavedGuard } from '../../components/ui/use-unsaved-guard'
 import {
@@ -42,7 +44,6 @@ import {
 import { analyzeTicketNow, type AIAnalysis } from './lib/ai'
 import { formatLabel } from './lib/format'
 import { AiAssistantTab } from './components/AiAssistantTab'
-import { AiSettingsDrawer } from './components/AiSettingsDrawer'
 import { ContextPanel } from './components/ContextPanel'
 import {
   GuestEmailBubble,
@@ -165,7 +166,9 @@ export default function SupportTicketsPage() {
   )
   const [mobileView, setMobileView] = useState<'list' | 'detail'>('list')
   const [showContext, setShowContext] = useState(false)
-  const [showAiSettings, setShowAiSettings] = useState(false)
+  const navigate = useNavigate()
+  // AI settings live on the settings page (S12), in the "AI suggestions" section.
+  const openAiSettings = useCallback(() => navigate('/tickets/settings#ai'), [navigate])
   const [config, setConfig] = useState<TicketsConfig | null>(null)
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([])
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
@@ -763,7 +766,7 @@ export default function SupportTicketsPage() {
         loadingAnalysis,
         config,
         activeTab,
-        onConfigureAi: () => setShowAiSettings(true),
+        onConfigureAi: openAiSettings,
         onAnalyzeNow: () => void analyzeNow(),
         analyzing,
         onMergeFromHistory: () => setShowMergeModal(true),
@@ -776,27 +779,31 @@ export default function SupportTicketsPage() {
   return (
     <Container className="bg-ui-bg-subtle/20 p-0">
       <div className="flex h-dvh flex-col overflow-hidden lg:h-[calc(100vh-57px)]">
-        <SupportHelpStrip config={config} onOpenAiSettings={() => setShowAiSettings(true)} />
+        <SupportHelpStrip config={config} />
         <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
           {/* Left: ticket list */}
           <div
             className={`${mobileView === 'detail' ? 'hidden' : 'flex'} bg-ui-bg-base w-full flex-shrink-0 flex-col border-r lg:flex lg:w-[320px] xl:w-[340px]`}
           >
             <div className="space-y-3 border-b p-4 lg:p-6">
-              <div className="flex items-center justify-between">
-                <Heading level="h1" className="flex items-center gap-2 text-xl font-bold">
-                  <ChatBubbleLeftRight className="text-ui-fg-interactive" />
+              <div className="flex items-center justify-between gap-2">
+                <Heading level="h1" className="flex min-w-0 items-center gap-2 text-lg font-bold whitespace-nowrap">
+                  <ChatBubbleLeftRight className="text-ui-fg-interactive flex-shrink-0" />
                   Support inbox
                 </Heading>
-                <Button
-                  variant="secondary"
-                  size="small"
-                  onClick={() => void fetchTickets()}
-                  disabled={loadingTickets}
-                >
-                  <ArrowPath className={loadingTickets ? 'animate-spin' : ''} />
-                  Refresh
-                </Button>
+                <div className="flex flex-shrink-0 items-center gap-3">
+                  <SettingsLink to="/tickets/settings" />
+                  <Button
+                    variant="secondary"
+                    size="small"
+                    onClick={() => void fetchTickets()}
+                    disabled={loadingTickets}
+                    title="Refresh the list"
+                  >
+                    <ArrowPath className={loadingTickets ? 'animate-spin' : ''} />
+                    <span className="sr-only">Refresh</span>
+                  </Button>
+                </div>
               </div>
               <Input
                 size="small"
@@ -1309,7 +1316,7 @@ export default function SupportTicketsPage() {
                         config={config}
                         onAnalyzeNow={() => void analyzeNow()}
                         analyzing={analyzing}
-                        onOpenSettings={() => setShowAiSettings(true)}
+                        onOpenSettings={openAiSettings}
                         onApplySuggestion={(text) => {
                           setReply(text)
                           setActiveTab('conversation')
@@ -1543,8 +1550,8 @@ export default function SupportTicketsPage() {
                       <ContextPanel
                         {...contextPanelProps}
                         onConfigureAi={() => {
-                          setShowAiSettings(true)
                           setShowContext(false)
+                          openAiSettings()
                         }}
                         onSelectTicket={(id) => {
                           keepOutsideListRef.current = id
@@ -1634,14 +1641,6 @@ export default function SupportTicketsPage() {
         </div>
       )}
 
-      <AiSettingsDrawer
-        open={showAiSettings}
-        onOpenChange={setShowAiSettings}
-        onSettingsChanged={() => {
-          void fetchConfig()
-          if (selectedTicketId) void fetchAnalysis(selectedTicketId)
-        }}
-      />
     </Container>
   )
 }

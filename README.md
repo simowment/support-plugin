@@ -108,12 +108,12 @@ variable is read only when the matching option is unset.
 | `discord_webhook_url`         | `DISCORD_WEBHOOK_URL`             | none           | Discord-compatible webhook for new ticket, customer reply, closed and escalation messages. Unset means no webhook calls.                        |
 | `email_queue_module`          | none                              | `"emailQueue"` | Container key of the email queue used to email replies (customer and guest).                                                                    |
 | `support_email`               | `SUPPORT_EMAIL`                   | none           | Support mailbox, used as the Reply-To of emailed customer replies when no reply domain is set.                                                  |
-| `email_customer_replies`      | none                              | `true`         | Email admin replies (and AI auto-replies) to signed-in customers. Set `false` to only store them on the ticket.                                  |
+| `email_customer_replies`      | none                              | `true`         | Email admin replies (and AI auto-replies) to signed-in customers. Set `false` to only store them on the ticket. The switch in Support inbox > Settings wins over this option.                                  |
 | `setupHelp`                   | none                              | none           | `{ text?: string; url?: string }`. Host hint shown in the admin help strip under the mail setup text (for hosts that set up mail outside the admin). Returned as `setup_help` (`{ text, url }` or `null`) by `GET /admin/tickets/config`. |
 
 ### `supportTicketAi` module options
 
-Admin-saved settings (AI Settings drawer) take precedence over these options; the options are fallbacks.
+Admin-saved settings (Support inbox > Settings, AI suggestions) take precedence over these options; the options are fallbacks.
 
 | Option                    | Env fallback                           | Default                         | Description                                                                                                     |
 | ------------------------- | -------------------------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------- |
@@ -143,6 +143,7 @@ npx medusa db:migrate
 | `ticket_inbound_email_receipt` | `InboundEmailReceipt` | Idempotency records for inbound email.                         |
 | `ticket_email_reply_token`     | `EmailReplyToken`     | Hashed one-time guest reply tokens.                            |
 | `ticket_outbound_email_draft`  | `OutboundEmailDraft`  | Reviewed guest email replies and their queue status.           |
+| `support_ticket_setting`       | `SupportTicketSetting`| Switches saved in Support inbox > Settings (key/value, no secrets). |
 | `ai_setting`                   | `AISetting`           | AI provider, prompt and flag settings (key/value).             |
 | `ai_ticket_analysis`           | `AITicketAnalysis`    | AI analysis results per ticket.                                |
 
@@ -185,6 +186,8 @@ ticket). Categories: `order_issue`, `return_request`, `fulfillment_issue`, `prod
 | `POST`   | `/admin/tickets/upload`                      | Upload attachments (multipart).                                                        |
 | `GET`    | `/admin/tickets/ai-settings`                 | AI flags, provider (API key is never returned) and prompts.                            |
 | `POST`   | `/admin/tickets/ai-settings`                 | Update AI flags, provider and prompts.                                                 |
+| `GET`    | `/admin/tickets/settings`                    | Everything the settings page shows: switches with their source (`admin`, `host`, `default`), host state (never secret values) and the AI section. |
+| `POST`   | `/admin/tickets/settings`                    | Save `email_customer_replies`, `discord_notifications`, `ai_enabled`, `auto_reply_enabled`, `auto_reply_min_confidence` (0.5 to 1); `null` goes back to the default. |
 | `GET`    | `/admin/tickets/:id/ai`                      | Stored AI analysis for a ticket.                                                       |
 | `POST`   | `/admin/tickets/:id/ai`                      | Run AI analysis on demand ("Analyze now"). `400 AI_DISABLED` / `400 AI_NOT_CONFIGURED` when it cannot run. |
 | `POST`   | `/admin/tickets/:id/ai/suggest`              | Generate a suggested reply from an existing analysis.                                  |
@@ -209,9 +212,15 @@ ticket). Categories: `order_issue`, `return_request`, `fulfillment_issue`, `prod
     disabled with the reason when the shop cannot send;
   - the side panel has a plain Status select, an admin-user "Assigned to" select, the customer's other tickets and
     "Merge one into this ticket…" (the other ticket's messages and notes move here and it is closed).
-- **AI suggestions** tab and **AI settings** drawer: shows "Not set up" when no provider key is configured, "Analyze now"
-  for tickets that arrived before AI was set up, the real auto-reply rules (85% confidence, blocked categories) and a
-  cost note.
+- **AI suggestions** tab: shows "Not set up" when no provider key is configured and "Analyze now" for tickets that
+  arrived before AI was set up; its settings links open the AI section of the settings page.
+- **Settings** (`/tickets/settings`, the last item under Support inbox, also linked from the inbox header and from each
+  item of the help strip): every option the plugin reads, in four sections (`#replies`, `#email-intake`,
+  `#notifications`, `#ai`). Switches save at once: email replies to signed-in customers, Discord ticket alerts, AI
+  suggestions, auto-reply. The AI form (auto-reply minimum confidence, provider, model, base URL, API key, instructions)
+  saves with the bar at the bottom. Options set on the host (inbound mail, reply domain, signing key, support mailbox,
+  Discord webhook, AI gateway and encryption key) are shown as Set / Not set with the variable and the `igm` command
+  under Technical details. Each row says where its value comes from (Set here, Set on the host, Default).
 
 The plugin adds no widgets to other Admin pages.
 
@@ -227,9 +236,10 @@ Events emitted by the `supportTicket` module: `support_ticket.created`, `support
 | `ticket-reply-email`   | message_added (admin or system sender)           | Emails the reply to a signed-in customer through the email queue (idempotency key `support-ticket-admin-reply:<message id>`). Guest tickets use the reviewed draft flow instead.           |
 | `ai-ticket-analyzer`   | created, message_added (customer only)           | Runs AI analysis when AI is enabled **and** a provider is configured; auto-replies if enabled and eligible; sends escalations to the webhook. Email-channel tickets are not analysed on creation. |
 
-To disable AI processing, toggle **AI enabled** off in the AI Settings drawer (or leave the provider unconfigured: the
-analyzer then logs and skips). Auto-reply is off until enabled in the Admin. Leave `discord_webhook_url` unset to
-disable webhook calls. The plugin has no scheduled jobs.
+To disable AI processing, turn **AI suggestions** off in Support inbox > Settings (or leave the provider unconfigured:
+the analyzer then logs and skips). Auto-reply is off until enabled in the Admin. Turn **Send ticket alerts to Discord**
+off there, or leave `discord_webhook_url` unset, to stop webhook calls. Settings saved in the admin live in the
+`support_ticket_setting` table (switches) and `ai_setting` (AI); the switches are cached for 15 seconds per process. The plugin has no scheduled jobs.
 
 ## Storefront integration
 

@@ -8,6 +8,7 @@ import { TicketNote } from './models/ticket-note'
 import { InboundEmailReceipt } from './models/inbound-email-receipt'
 import { EmailReplyToken } from './models/email-reply-token'
 import { OutboundEmailDraft } from './models/outbound-email-draft'
+import { SupportTicketSetting } from './models/support-ticket-setting'
 import { buildTicketAttachmentUrl } from '../../api/shared/attachments'
 import {
   INBOUND_EMAIL_DISABLED_MESSAGE,
@@ -167,6 +168,20 @@ function isEventBusService(value: unknown): value is EventBusService {
   )
 }
 
+/** Switches the owner changes in Support inbox > Settings. */
+export const SUPPORT_SETTING_KEYS = ['email_customer_replies', 'discord_notifications'] as const
+export type SupportSettingKey = (typeof SUPPORT_SETTING_KEYS)[number]
+type StoredSupportSettings = Partial<Record<SupportSettingKey, boolean>>
+/** admin: saved in Support inbox > Settings; host: a module option; default: built in. */
+export type SupportSettingSource = 'admin' | 'host' | 'default'
+export type SupportSettings = Record<SupportSettingKey, { value: boolean; source: SupportSettingSource }>
+export type EffectiveSupportTicketConfig = ResolvedSupportTicketConfig & {
+  discordWebhookSet: boolean
+  discordNotificationsEnabled: boolean
+}
+// Read on every reply and notification; a short cache keeps that off the database.
+const SETTINGS_CACHE_TTL_MS = 15_000
+
 export default class SupportTicketModuleService extends MedusaService({
   Ticket,
   TicketMessage,
@@ -175,12 +190,15 @@ export default class SupportTicketModuleService extends MedusaService({
   InboundEmailReceipt,
   EmailReplyToken,
   OutboundEmailDraft,
+  SupportTicketSetting,
 }) {
   protected eventBusService_: EventBusService | undefined
   private logger_: Logger
   private container_: Record<string, unknown> & { resolve?: (key: string) => unknown }
 
   private config_: ResolvedSupportTicketConfig
+  private options_: SupportTicketModuleOptions
+  private settingsCache_: { at: number; values: StoredSupportSettings } | null = null
 
   constructor(
     container: Record<string, unknown> & { logger?: Logger },
@@ -191,12 +209,99 @@ export default class SupportTicketModuleService extends MedusaService({
     const eventBusService = container[Modules.EVENT_BUS]
     this.eventBusService_ = isEventBusService(eventBusService) ? eventBusService : undefined
     this.logger_ = container.logger ?? (console as unknown as Logger)
-    this.config_ = resolveSupportTicketConfig(options ?? {})
+    this.options_ = options ?? {}
+    this.config_ = resolveSupportTicketConfig(this.options_)
   }
 
-  /** Resolved module configuration (options with environment fallbacks). */
+  /**
+   * Resolved module configuration (options with environment fallbacks), without the
+   * settings changed in the admin. For the switches the owner can change, use
+   * `getEffectiveConfig()`.
+   */
   getConfig(): ResolvedSupportTicketConfig {
     return this.config_
+  }
+
+  // --- Settings changed in the admin (Support inbox > Settings) ---
+
+  private async readStoredSettings(): Promise<StoredSupportSettings> {
+    const now = Date.now()
+    if (this.settingsCache_ && now - this.settingsCache_.at < SETTINGS_CACHE_TTL_MS) {
+      return this.settingsCache_.values
+    }
+    const rows = (await this.listSupportTicketSettings(
+      { key: [...SUPPORT_SETTING_KEYS] },
+      { take: SUPPORT_SETTING_KEYS.length },
+    )) as Array<{ key: string; value: string }>
+    const values: StoredSupportSettings = {}
+    for (const row of rows) {
+      if (!(SUPPORT_SETTING_KEYS as readonly string[]).includes(row.key)) continue
+      try {
+        const parsed: unknown = JSON.parse(row.value)
+        if (typeof parsed === 'boolean') values[row.key as SupportSettingKey] = parsed
+      } catch {
+        this.logger_.warn(`[support-tickets] Ignoring unreadable setting "${row.key}"`)
+      }
+    }
+    this.settingsCache_ = { at: now, values }
+    return values
+  }
+
+  /** Every switch on the settings page, with its value and where that value comes from. */
+  async getSettings(): Promise<SupportSettings> {
+    const stored = await this.readStoredSettings()
+    const optionEmail = typeof this.options_.email_customer_replies === 'boolean'
+    return {
+      email_customer_replies: {
+        value: stored.email_customer_replies ?? this.config_.emailCustomerReplies,
+        source:
+          stored.email_customer_replies !== undefined ? 'admin' : optionEmail ? 'host' : 'default',
+      },
+      discord_notifications: {
+        value: stored.discord_notifications ?? true,
+        source: stored.discord_notifications !== undefined ? 'admin' : 'default',
+      },
+    }
+  }
+
+  /** Saves the given switches; `null` removes the stored value (back to the default). */
+  async updateSettings(
+    patch: Partial<Record<SupportSettingKey, boolean | null>>,
+  ): Promise<SupportSettings> {
+    for (const key of SUPPORT_SETTING_KEYS) {
+      const value = patch[key]
+      if (value === undefined) continue
+      const [existing] = (await this.listSupportTicketSettings({ key }, { take: 1 })) as Array<{
+        id: string
+      }>
+      if (value === null) {
+        if (existing) await this.deleteSupportTicketSettings([existing.id])
+      } else if (existing) {
+        await this.updateSupportTicketSettings([{ id: existing.id, value: JSON.stringify(value) }])
+      } else {
+        await this.createSupportTicketSettings([{ key, value: JSON.stringify(value) }])
+      }
+    }
+    this.settingsCache_ = null
+    return this.getSettings()
+  }
+
+  /**
+   * The configuration as it applies now: module options and environment, with the
+   * settings changed in the admin on top. `discordWebhookUrl` is undefined while Discord
+   * notifications are turned off; `discordWebhookSet` still says whether one is set.
+   */
+  async getEffectiveConfig(): Promise<EffectiveSupportTicketConfig> {
+    const settings = await this.getSettings()
+    return {
+      ...this.config_,
+      emailCustomerReplies: settings.email_customer_replies.value,
+      discordWebhookSet: Boolean(this.config_.discordWebhookUrl),
+      discordNotificationsEnabled: settings.discord_notifications.value,
+      discordWebhookUrl: settings.discord_notifications.value
+        ? this.config_.discordWebhookUrl
+        : undefined,
+    }
   }
 
   private getPgConnection(): KnexConnection {

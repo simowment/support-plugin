@@ -97,7 +97,7 @@ export default async function ticketNotificationHandler({
 }: SubscriberArgs<TicketNotificationData>) {
   const logger = container.resolve('logger')
   const ticketService: SupportTicketModuleService = container.resolve(SUPPORT_TICKET_MODULE)
-  const webhookUrl = ticketService.getConfig().discordWebhookUrl
+  const webhookUrl = (await ticketService.getEffectiveConfig()).discordWebhookUrl
 
   logger.info(`[Support Tickets] Event: ${name} ticket=${data.id || data.ticket_id}`)
 

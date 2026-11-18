@@ -78,7 +78,7 @@ export default async function handleAiTicketEvents({
 
       const autoReplyEnabled = await aiService.isAutoReplyEnabled()
 
-      if (autoReplyEnabled && aiService.shouldAutoReply(analysis) && analysis.suggested_response) {
+      if (autoReplyEnabled && aiService.shouldAutoReply(analysis, await aiService.getAutoReplyMinConfidence()) && analysis.suggested_response) {
         const didMark = await aiService.markAutoReplied(analysis.id)
         if (didMark) {
           await ticketService.addMessage({
@@ -103,7 +103,7 @@ export default async function handleAiTicketEvents({
             message: ticketData.message,
           },
           logger,
-          ticketService.getConfig().discordWebhookUrl,
+          (await ticketService.getEffectiveConfig()).discordWebhookUrl,
         )
       }
     } catch (error) {
@@ -157,7 +157,7 @@ export default async function handleAiTicketEvents({
       if (
         autoReplyEnabled &&
         updatedAnalysis &&
-        aiService.shouldAutoReply(updatedAnalysis) &&
+        aiService.shouldAutoReply(updatedAnalysis, await aiService.getAutoReplyMinConfidence()) &&
         updatedAnalysis.suggested_response
       ) {
         const didMark = await aiService.markAutoReplied(updatedAnalysis.id)
@@ -187,7 +187,7 @@ export default async function handleAiTicketEvents({
             message: messageData.message,
           },
           logger,
-          ticketService.getConfig().discordWebhookUrl,
+          (await ticketService.getEffectiveConfig()).discordWebhookUrl,
         )
       }
     } catch (error) {

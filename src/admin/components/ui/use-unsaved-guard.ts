@@ -51,10 +51,14 @@ export function useUnsavedGuard(dirty: boolean, includeSearch = false) {
   )
   const blockerRef = useRef(blocker)
   blockerRef.current = blocker
+  // Through a ref, so the effect below runs once per block and needs no lint exception
+  // (not every plugin's lint config knows the react-hooks rules).
+  const promptRef = useRef(prompt)
+  promptRef.current = prompt
 
   useEffect(() => {
     if (blocker.state !== 'blocked') return
-    void prompt({
+    void promptRef.current({
       title: 'Discard unsaved changes?',
       description: 'Your changes have not been saved and will be lost.',
       confirmText: 'Discard',
@@ -66,7 +70,6 @@ export function useUnsavedGuard(dirty: boolean, includeSearch = false) {
       if (confirmed) current.proceed()
       else current.reset()
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blocker.state])
 
   /** Navigate with the guard applied (prompts when there are unsaved edits). */

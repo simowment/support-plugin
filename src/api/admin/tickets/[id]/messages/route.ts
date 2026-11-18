@@ -9,6 +9,7 @@ import { SenderType } from '../../../../../modules/support-ticket'
 import type { MessageBody } from '../../../../middlewares'
 import { attachTicketAttachmentUrls } from '../../../../shared/attachments'
 import {
+  EMAIL_REPLIES_OFF_MESSAGE,
   EMAIL_QUEUE_NOT_CONFIGURED_MESSAGE,
   GUEST_TICKET_USE_EMAIL_DRAFT_MESSAGE,
 } from '../../../../../lib/errors'
@@ -39,12 +40,12 @@ export async function POST(req: AuthenticatedMedusaRequest<MessageBody>, res: Me
   if (!result.ticket.customer_id)
     return sendError(res, 409, 'GUEST_TICKET_USE_EMAIL_DRAFT', GUEST_TICKET_USE_EMAIL_DRAFT_MESSAGE)
 
-  const config = service.getConfig()
+  const config = await service.getEffectiveConfig()
   const queueRegistered = req.scope.hasRegistration(config.emailQueueModule)
   const email = !config.emailCustomerReplies
     ? {
         will_send: false,
-        reason: 'Emailing replies to customers is turned off in the plugin options.',
+        reason: EMAIL_REPLIES_OFF_MESSAGE,
       }
     : !queueRegistered
       ? { will_send: false, reason: EMAIL_QUEUE_NOT_CONFIGURED_MESSAGE }

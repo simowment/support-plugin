@@ -106,6 +106,11 @@ export type ResolvedSupportTicketConfig = {
   supportEmail?: string
   emailCustomerReplies: boolean
   setupHelp: ResolvedSetupHelp
+  /**
+   * The shop's slug on an igm host (env SHOP_SLUG), used only to print the exact host
+   * command on the settings page. Null elsewhere; the page then shows `<slug>`.
+   */
+  hostShopSlug: string | null
 }
 
 export function resolveSupportTicketConfig(
@@ -132,6 +137,7 @@ export function resolveSupportTicketConfig(
     )?.toLowerCase(),
     emailCustomerReplies: optionalBoolean(options.email_customer_replies) ?? true,
     setupHelp: resolveSetupHelp(options.setupHelp),
+    hostShopSlug: optionalString(env.SHOP_SLUG) ?? null,
   }
 }
 

@@ -141,6 +141,19 @@ export const AISettingsSchema = z.object({
   escalation_rules: z.string().max(PROMPT_MAX_LENGTH).optional(),
 })
 
+export const SupportTicketSettingsSchema = z
+  .object({
+    email_customer_replies: z.boolean().nullable().optional(),
+    discord_notifications: z.boolean().nullable().optional(),
+    ai_enabled: z.boolean().optional(),
+    auto_reply_enabled: z.boolean().optional(),
+    // 0.5 to 1 (50 % to 100 %); null goes back to the default.
+    auto_reply_min_confidence: z.number().min(0.5).max(1).nullable().optional(),
+  })
+  .strict()
+
+export type SupportTicketSettingsBody = z.infer<typeof SupportTicketSettingsSchema>
+
 export type CreateTicketBody = z.infer<typeof CreateTicketSchema>
 export type MessageBody = Omit<z.infer<typeof MessageSchema>, 'attachments'> & {
   attachments?: TicketAttachmentInput[]
@@ -172,7 +185,7 @@ const uploadTicketFiles = <Req extends MedusaRequest>(
   next: MedusaNextFunction,
 ) => multerUploadTicketFiles(req as never, res as never, next)
 
-const excludedAdminTicketUpdatePaths = new Set(['bulk', 'ai-settings', 'upload', 'config'])
+const excludedAdminTicketUpdatePaths = new Set(['bulk', 'ai-settings', 'upload', 'config', 'settings'])
 const validateUpdateTicketBody = validateAndTransformBody(UpdateTicketSchema)
 const authenticateAttachmentKey = authenticate('user', ['api-key'])
 const authenticateAttachmentAccount = authenticate(['user', 'customer'], ['session', 'bearer'])
@@ -284,6 +297,11 @@ export default defineMiddlewares({
       matcher: '/admin/tickets/bulk',
       method: 'POST',
       middlewares: [validateAndTransformBody(BulkTicketSchema)],
+    },
+    {
+      matcher: '/admin/tickets/settings',
+      method: 'POST',
+      middlewares: [validateAndTransformBody(SupportTicketSettingsSchema)],
     },
     {
       matcher: '/admin/tickets/ai-settings',
