@@ -1,4 +1,5 @@
-import { Badge, Container, Heading, Text } from '@medusajs/ui'
+import { CogSixTooth } from '@medusajs/icons'
+import { Badge, Button, Container, Heading, Text } from '@medusajs/ui'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { InstallerCode, InstallerHint } from './installer-hint'
@@ -185,14 +186,18 @@ export function HostSettingRow({
   )
 }
 
-/** The "Settings" text link for the header of a plugin's main page (PageHeader `links`). */
+/**
+ * The direct way from an app to its settings: a "Settings" button with the gear icon, in the
+ * header of the app's main page (PageHeader `links`, or next to the existing header actions).
+ * Every app has one, so its settings are always one click away (S12).
+ */
 export function SettingsLink({ to, label = 'Settings' }: { to: string; label?: string }) {
   return (
-    <Link
-      to={to}
-      className="txt-compact-small-plus text-ui-fg-interactive hover:text-ui-fg-interactive-hover"
-    >
-      {label}
-    </Link>
+    <Button size="small" variant="secondary" asChild>
+      <Link to={to} className="gap-x-1.5">
+        <CogSixTooth />
+        {label}
+      </Link>
+    </Button>
   )
 }
