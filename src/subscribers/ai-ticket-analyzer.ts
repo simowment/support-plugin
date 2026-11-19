@@ -7,6 +7,7 @@ import {
 import { SUPPORT_TICKET_AI_MODULE } from '../modules/ai/constants'
 import SupportTicketAIModuleService from '../modules/ai/service'
 import { sendEscalation } from '../utils/escalation-webhook'
+import { recordTicketAiOutcome } from '../lib/ai-health'
 
 type TicketCreatedEventData = {
   id: string
@@ -24,6 +25,20 @@ type MessageAddedEventData = {
   sender_type: string
   sender_id: string | null
   message: string
+}
+
+/** Keeps the "AI ticket analysis is failing" Store problem in step. Never throws. */
+async function recordAiOutcome(
+  container: SubscriberArgs['container'],
+  aiService: SupportTicketAIModuleService,
+  error: unknown,
+  logger: { warn: (message: string) => void },
+) {
+  const model = await aiService
+    .getProviderConfig()
+    .then((config) => config.model)
+    .catch(() => null)
+  await recordTicketAiOutcome(container, error, { model, feature: 'analysis' }, logger)
 }
 
 export default async function handleAiTicketEvents({
@@ -67,14 +82,20 @@ export default async function handleAiTicketEvents({
 
       logger.info(`[support-ticket-ai] Analyzing ticket ${ticketData.id}`)
 
-      const analysis = await aiService.analyzeTicket({
-        ticketId: ticketData.id,
-        subject: ticketData.subject,
-        message: ticketData.message,
-        category: ticketData.category,
-        customerId: ticketData.customer_id,
-        orderId: ticketData.order_id,
-      })
+      const analysis = await aiService
+        .analyzeTicket({
+          ticketId: ticketData.id,
+          subject: ticketData.subject,
+          message: ticketData.message,
+          category: ticketData.category,
+          customerId: ticketData.customer_id,
+          orderId: ticketData.order_id,
+        })
+        .catch(async (error) => {
+          await recordAiOutcome(container, aiService, error, logger)
+          throw error
+        })
+      await recordAiOutcome(container, aiService, undefined, logger)
 
       const autoReplyEnabled = await aiService.isAutoReplyEnabled()
 
@@ -142,13 +163,19 @@ export default async function handleAiTicketEvents({
           .filter((message) => message.sender_type !== 'system')
           .map((message) => message.message) ?? []
 
-      await aiService.analyzeMessage({
-        ticketId: messageData.ticket_id,
-        message: messageData.message,
-        senderType: messageData.sender_type,
-        conversationHistory,
-        existingAnalysis,
-      })
+      await aiService
+        .analyzeMessage({
+          ticketId: messageData.ticket_id,
+          message: messageData.message,
+          senderType: messageData.sender_type,
+          conversationHistory,
+          existingAnalysis,
+        })
+        .catch(async (error) => {
+          await recordAiOutcome(container, aiService, error, logger)
+          throw error
+        })
+      await recordAiOutcome(container, aiService, undefined, logger)
 
       const [updatedAnalysis, autoReplyEnabled] = await Promise.all([
         aiService.getAnalysisForTicket(messageData.ticket_id),

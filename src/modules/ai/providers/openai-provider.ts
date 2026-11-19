@@ -16,14 +16,68 @@ export type OpenAIProviderConfig = {
   headers?: Record<string, string>
 }
 
-export class ProviderAuthError extends Error {
+/**
+ * A failed AI call, classified. `config`: the key, credit, model, address or instructions are
+ * wrong and it will not fix itself (HTTP 401/402/403/404, connection refused, host not found);
+ * `transient`: timeout, HTTP 429/5xx, an unusable reply. `label` is short ("HTTP 401").
+ */
+export class AiProviderError extends Error {
   constructor(
     message: string,
-    public status: number,
+    public kind: 'config' | 'transient',
+    public label: string,
+    public status?: number,
   ) {
     super(message)
+    this.name = 'AiProviderError'
+  }
+}
+
+export class ProviderAuthError extends AiProviderError {
+  constructor(message: string, status: number) {
+    super(message, 'config', `HTTP ${status}`, status)
     this.name = 'ProviderAuthError'
   }
+}
+
+const CONFIG_HTTP_STATUSES = new Set([401, 402, 403, 404])
+const CONFIG_NETWORK_CODES: Record<string, string> = {
+  ECONNREFUSED: 'connection refused',
+  ENOTFOUND: 'host not found',
+  ERR_INVALID_URL: 'invalid address',
+}
+
+type SdkError = {
+  name?: unknown
+  statusCode?: unknown
+  status?: unknown
+  code?: unknown
+  cause?: unknown
+  lastError?: unknown
+  errors?: unknown
+  responseBody?: { error?: { code?: unknown } }
+}
+
+/** HTTP status and network code from an AI SDK error (RetryError.lastError, APICallError.cause chain). */
+function errorFacts(error: unknown): { status?: number; code?: string; timeout: boolean } {
+  const facts: { status?: number; code?: string; timeout: boolean } = { timeout: false }
+  const seen = new Set<unknown>()
+  const queue: unknown[] = [error]
+  while (queue.length && seen.size < 10) {
+    const current = queue.shift() as SdkError | undefined
+    if (!current || typeof current !== 'object' || seen.has(current)) continue
+    seen.add(current)
+    const status = current.statusCode ?? current.status ?? current.responseBody?.error?.code
+    if (facts.status === undefined && typeof status === 'number') facts.status = status
+    if (facts.code === undefined && typeof current.code === 'string') facts.code = current.code
+    if (current.name === 'AbortError' || current.name === 'TimeoutError') facts.timeout = true
+    queue.push(
+      current.lastError,
+      current.cause,
+      ...(Array.isArray(current.errors) ? current.errors : []),
+    )
+  }
+  return facts
 }
 
 export class OpenAIProvider implements AIProvider {
@@ -36,7 +90,8 @@ export class OpenAIProvider implements AIProvider {
       apiKey: config.apiKey,
       headers: config.headers,
     })
-    this.model = this.client(config.model)
+    // Chat Completions (POST {baseURL}/chat/completions), like every other AI feature of the shop.
+    this.model = this.client.chat(config.model)
   }
 
   private createAbortSignal(): AbortSignal {
@@ -45,15 +100,32 @@ export class OpenAIProvider implements AIProvider {
     return controller.signal
   }
 
-  /** Wraps SDK calls to map auth errors to ProviderAuthError for cache-invalidation in the service. */
+  /**
+   * Wraps SDK calls: auth errors become ProviderAuthError (the service clears its cached
+   * client), every other failure an AiProviderError with its kind, for the Store problem.
+   */
   private wrapCall<T>(fn: () => Promise<T>): Promise<T> {
     return fn().catch((error) => {
-      const status = error?.statusCode ?? error?.status ?? error?.responseBody?.error?.code
+      const { status, code, timeout } = errorFacts(error)
       if (status === 401 || status === 403) {
-        throw new ProviderAuthError(error.message ?? 'AI provider auth error', status)
+        throw new ProviderAuthError(error?.message ?? 'AI provider auth error', status)
       }
-
-      throw new Error(`AI provider error${status ? ` (${status})` : ''}: ${getErrorMessage(error)}`)
+      const networkLabel = code ? CONFIG_NETWORK_CODES[code] : undefined
+      const message = `AI provider error${status ? ` (${status})` : code ? ` (${code})` : ''}: ${getErrorMessage(error)}`
+      if (status !== undefined) {
+        throw new AiProviderError(
+          message,
+          CONFIG_HTTP_STATUSES.has(status) ? 'config' : 'transient',
+          `HTTP ${status}`,
+          status,
+        )
+      }
+      if (networkLabel) throw new AiProviderError(message, 'config', networkLabel)
+      throw new AiProviderError(
+        message,
+        'transient',
+        timeout ? 'timed out' : code ? 'network error' : 'unusable reply',
+      )
     })
   }
 
@@ -68,8 +140,10 @@ export class OpenAIProvider implements AIProvider {
     escalationRules?: string
   }): Promise<ActionDecision> {
     if (!input.systemPrompt) {
-      throw new Error(
+      throw new AiProviderError(
         'AI analysis failed: No system prompt configured. Please set one in the AI Support settings.',
+        'config',
+        'no analysis instructions set',
       )
     }
 
@@ -130,8 +204,10 @@ export class OpenAIProvider implements AIProvider {
     systemPrompt?: string
   }): Promise<GenerateResponseResult> {
     if (!input.systemPrompt) {
-      throw new Error(
+      throw new AiProviderError(
         'AI response generation failed: No response prompt configured. Please set one in the AI Support settings.',
+        'config',
+        'no reply instructions set',
       )
     }
 

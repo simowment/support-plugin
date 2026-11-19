@@ -8,6 +8,7 @@ import SupportTicketAIModuleService from '../../../../../modules/ai/service'
 import { SUPPORT_TICKET_AI_MODULE } from '../../../../../modules/ai/constants'
 import { sendEscalation } from '../../../../../utils/escalation-webhook'
 import { sendError } from '../../../../shared/helpers'
+import { recordTicketAiOutcome } from '../../../../../lib/ai-health'
 
 type TicketRecord = {
   subject: string
@@ -96,14 +97,30 @@ export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse)
         `has_api_key=${Boolean(providerConfig.api_key)}`,
     )
 
-    const analysis = await aiService.analyzeTicket({
-      ticketId: id,
-      subject: ticket.subject,
-      message: firstCustomerMessage.message,
-      category: ticket.category,
-      customerId: ticket.customer_id,
-      orderId: ticket.order_id,
-    })
+    const analysis = await aiService
+      .analyzeTicket({
+        ticketId: id,
+        subject: ticket.subject,
+        message: firstCustomerMessage.message,
+        category: ticket.category,
+        customerId: ticket.customer_id,
+        orderId: ticket.order_id,
+      })
+      .catch(async (error) => {
+        await recordTicketAiOutcome(
+          req.scope,
+          error,
+          { model: providerConfig.model, feature: 'analysis' },
+          logger,
+        )
+        throw error
+      })
+    await recordTicketAiOutcome(
+      req.scope,
+      undefined,
+      { model: providerConfig.model, feature: 'analysis' },
+      logger,
+    )
 
     const autoReplyEnabled = await aiService.isAutoReplyEnabled()
     if (

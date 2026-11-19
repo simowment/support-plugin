@@ -11,13 +11,15 @@ import {
 } from '../../../../modules/ai/constants'
 import type SupportTicketAIModuleService from '../../../../modules/ai/service'
 import type { SupportTicketSettingsBody } from '../../../middlewares'
+import { clearTicketAiProblem, TICKET_AI_PROBLEM } from '../../../../lib/ai-health'
+import { findOpenStoreProblem } from '../../../../lib/store-problem'
 
 type Source = 'admin' | 'host' | 'default'
 
 async function aiSection(req: AuthenticatedMedusaRequest) {
   if (!req.scope.hasRegistration(SUPPORT_TICKET_AI_MODULE)) return null
   const ai = req.scope.resolve<SupportTicketAIModuleService>(SUPPORT_TICKET_AI_MODULE)
-  const [enabled, autoReply, minConfidence, provider, prompts, configured, storedKeys] =
+  const [enabled, autoReply, minConfidence, provider, prompts, configured, storedKeys, problem] =
     await Promise.all([
       ai.isEnabled(),
       ai.isAutoReplyEnabled(),
@@ -26,6 +28,7 @@ async function aiSection(req: AuthenticatedMedusaRequest) {
       ai.getPromptConfig(),
       ai.isProviderConfigured(),
       ai.getStoredSettingKeys(),
+      findOpenStoreProblem(req.scope, TICKET_AI_PROBLEM),
     ])
   const stored = new Set(storedKeys)
   const host = ai.getHostAiDefaults()
@@ -49,6 +52,14 @@ async function aiSection(req: AuthenticatedMedusaRequest) {
     },
     blocked_categories: BLOCKED_AUTO_REPLY_CATEGORIES,
     configured,
+    // From the open "AI ticket analysis is failing" Store problem.
+    health: {
+      failing: Boolean(problem),
+      problem_type: TICKET_AI_PROBLEM.type,
+      since: problem?.created_at ?? null,
+      failure: typeof problem?.context?.failure === 'string' ? problem.context.failure : null,
+      ignored: problem?.status === 'ignored',
+    },
     provider: {
       provider: provider.provider,
       model: provider.model,
@@ -130,6 +141,13 @@ export async function POST(
   if (aiFields && req.scope.hasRegistration(SUPPORT_TICKET_AI_MODULE)) {
     const ai = req.scope.resolve<SupportTicketAIModuleService>(SUPPORT_TICKET_AI_MODULE)
     if (typeof body.ai_enabled === 'boolean') await ai.setEnabled(body.ai_enabled)
+    if (body.ai_enabled === false) {
+      await clearTicketAiProblem(
+        req.scope,
+        'AI suggestions were turned off.',
+        req.scope.resolve('logger'),
+      )
+    }
     if (typeof body.auto_reply_enabled === 'boolean')
       await ai.setAutoReplyEnabled(body.auto_reply_enabled)
     if (body.auto_reply_min_confidence !== undefined)

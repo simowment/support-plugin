@@ -9,6 +9,7 @@ import {
   SUPPORT_TICKET_AI_MODULE,
   MAX_HISTORY_MESSAGES,
 } from '../../../../../../modules/ai/constants'
+import { recordTicketAiOutcome } from '../../../../../../lib/ai-health'
 
 // POST /admin/tickets/:id/ai/suggest — Generate a suggested AI response for a ticket
 export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse) {
@@ -42,13 +43,21 @@ export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse)
 
   const provider = await aiService.getProvider()
   const prompts = await aiService.getPromptConfig()
-  const result = await provider.generateResponse({
-    subject: ticketData.ticket.subject,
-    message: latestCustomerMessage?.message ?? '',
-    conversationHistory,
-    category: analysis.category ?? 'general',
-    systemPrompt: prompts.response_system_prompt || undefined,
-  })
+  const logger = req.scope.resolve('logger')
+  const model = (await aiService.getProviderConfig()).model
+  const result = await provider
+    .generateResponse({
+      subject: ticketData.ticket.subject,
+      message: latestCustomerMessage?.message ?? '',
+      conversationHistory,
+      category: analysis.category ?? 'general',
+      systemPrompt: prompts.response_system_prompt || undefined,
+    })
+    .catch(async (error) => {
+      await recordTicketAiOutcome(req.scope, error, { model, feature: 'suggested reply' }, logger)
+      throw error
+    })
+  await recordTicketAiOutcome(req.scope, undefined, { model, feature: 'suggested reply' }, logger)
 
   await aiService.updateAITicketAnalyses([
     {

@@ -25,6 +25,14 @@ export type SupportSettings = {
     auto_reply_min_confidence: Sourced<number> & { default: number; min: number }
     blocked_categories: string[]
     configured: boolean
+    /** From the open "AI ticket analysis is failing" Store problem. */
+    health: {
+      failing: boolean
+      problem_type: string
+      since: string | null
+      failure: string | null
+      ignored: boolean
+    }
     provider: {
       provider: string
       model: string

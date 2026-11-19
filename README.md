@@ -128,6 +128,23 @@ Admin-saved settings (Support inbox > Settings, AI suggestions) take precedence 
 The plugin itself does not read AI provider environment variables (such as `OPENAI_API_KEY`); map your own variables
 to the options above. See `.env.example` for the environment fallbacks.
 
+Requests go to the Chat Completions API (`POST {base_url}/chat/completions`, `@ai-sdk/openai` `.chat(model)`), like
+the shop's other AI features, so any OpenAI-compatible endpoint or gateway works.
+
+#### When the AI provider fails
+
+A failing analysis or suggested reply raises the Store problem `ai_ticket_analysis_failing` ("AI ticket analysis is
+failing (HTTP 401)"):
+
+- at once on a configuration error: HTTP 401, 402, 403 or 404, connection refused, host not found, an invalid
+  address, or missing analysis or reply instructions;
+- after 3 failures in a row of another kind (timeout, HTTP 429 or 5xx, a reply that does not match the schema).
+
+The next successful AI answer resolves it, and so does turning AI suggestions off. The problem names the fix: check
+the provider, model, address and API key on Support inbox > Settings > AI, or turn AI suggestions off. The Status row
+of that tab shows "Failing (...)" with a link to the problem. The failure count is kept per process (server and worker
+separately) and starts again after a restart. Only AI provider failures count; other errors are logged as before.
+
 ## Database / migrations
 
 ```bash

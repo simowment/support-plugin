@@ -11,7 +11,7 @@ import {
   SettingsPage,
   SettingsSection,
 } from '../../../components/ui/settings-page'
-import { formatList } from '../../../components/ui/format'
+import { formatDateTime, formatList } from '../../../components/ui/format'
 import { useUnsavedGuard } from '../../../components/ui/use-unsaved-guard'
 import { saveProviderConfig } from '../lib/ai'
 import {
@@ -277,6 +277,14 @@ const SupportSettingsPage = () => {
   const aiStatus = useMemo(() => {
     if (!ai) return null
     if (!ai.configured) return { ok: false, text: 'Not set up: tickets are not analyzed' }
+    if (ai.health.failing) {
+      return {
+        ok: false,
+        text: `Failing${ai.health.failure ? ` (${ai.health.failure})` : ''}${
+          ai.health.since ? ` since ${formatDateTime(ai.health.since)}` : ''
+        }: tickets get no AI analysis`,
+      }
+    }
     return ai.enabled.value
       ? { ok: true, text: 'Set up and on' }
       : { ok: undefined, text: 'Set up, but turned off' }
@@ -541,9 +549,22 @@ const SupportSettingsPage = () => {
                   </Text>
                 }
                 help={
-                  ai.configured
-                    ? undefined
-                    : 'Provider, model, address and API key must all be set (below, or on the host).'
+                  ai.configured ? (
+                    ai.health.failing ? (
+                      <>
+                        The AI provider refuses or does not answer. Check the provider, model,
+                        address and API key in this tab.{' '}
+                        <Link
+                          to={`/operational-issues?type=${ai.health.problem_type}`}
+                          className="text-ui-fg-interactive"
+                        >
+                          Open the Store problem{ai.health.ignored ? ' (ignored)' : ''}
+                        </Link>
+                      </>
+                    ) : undefined
+                  ) : (
+                    'Provider, model, address and API key must all be set (below, or on the host).'
+                  )
                 }
               />
               <SettingRow
